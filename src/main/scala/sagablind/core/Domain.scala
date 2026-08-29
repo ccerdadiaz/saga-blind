@@ -6,17 +6,25 @@ package sagablind.core
 
 opaque type SagaId = String
 object SagaId:
-  def apply(s: String): SagaId  = s
-  def generate(): SagaId        = java.util.UUID.randomUUID().toString
+  def apply(s: String): SagaId = s
+  def generate(): SagaId       = java.util.UUID.randomUUID().toString
   extension (id: SagaId) def value: String = id
 
 /** Step semantics — same vocabulary as saga-graph */
 enum StepKind:
   case Mandatory, Optional, BestEffort
 
+/** Step lifecycle states */
+enum StepStatus:
+  case Registered, Done, Failed, Unknown
+
+/** Saga lifecycle states */
+enum SagaStatus:
+  case Running, Done, Failed, Stopped
+
 /** A single compensation extractor — JSONPath over the pool */
 case class CompensationExtractor(
-  key:     String,   // name persisted in the WAL
+  key:     String,   // name in the WAL
   path:    String,   // "$.weapon.id"
   argType: ArgType,
 )
