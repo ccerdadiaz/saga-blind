@@ -1,0 +1,4 @@
+saga: test-saga
+jar: /tmp/nonexistent.jar
+steps:
+  mandatory: measurements

@@ -18,9 +18,13 @@ enum StepKind:
 enum StepStatus:
   case Registered, Done, Failed, Unknown
 
-/** Saga lifecycle states */
+/** Saga instance lifecycle states */
 enum SagaStatus:
-  case Running, Done, Failed, Stopped
+  case Running, Done, Failed, Stopped, PausedBetweenSteps, Compensated
+
+/** Definition lifecycle — play/pause/stop/remove model */
+enum DefinitionStatus:
+  case Playing, Paused, Stopped, Removed
 
 /** A single compensation extractor — JSONPath over the pool */
 case class CompensationExtractor(
@@ -29,8 +33,11 @@ case class CompensationExtractor(
   argType: ArgType,
 )
 
+// Note: JSON numbers are represented as Double (ujson limitation).
+// BigDecimal precision is not supported — use Str with explicit
+// conversion in the step's adapter layer if needed.
 enum ArgType:
-  case Str, Int, UUID, Bool
+  case Str, Int, Float, UUID, Bool, Arr
 
 /** Descriptor declared by the jar — the contract between jar and engine */
 case class StepDescriptor(
