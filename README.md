@@ -7,6 +7,8 @@
 
 This project exists because the combination of ideas it explores is interesting to build and worth understanding — not because it solves a problem better than existing tools. It is an honest aggregation of known theory and practice, pushing some of those ideas a little further than usual and seeing what happens.
 
+→ [Architecture diagrams](doc/architecture.md)
+
 ## What it does
 
 saga-blind runs as a service. It starts with an empty registry and waits. When a `.saga` definition file appears in its watched folder, it registers the saga by name. When a client sends a launch request with a name and some initial data, the engine loads the jar declared in the definition, instantiates the steps, and runs the saga.
