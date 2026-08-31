@@ -1,6 +1,7 @@
 ThisBuild / organization := "io.github.ccerdadiaz"
 ThisBuild / version      := "0.1.0-SNAPSHOT"
 ThisBuild / scalaVersion := "3.6.4"
+Compile / mainClass := Some("sagablind.SagaServer")
 
 lazy val root = (project in file("."))
   .settings(
