@@ -13,7 +13,7 @@ import sagablind.store.WalStore
 // durability guarantees — WAL-first already ensures full recoverability.
 
 class PersistentOkvPool(val sagaId: SagaId, store: WalStore):
-  private val memory = OkvPool(sagaId)
+  val memory: OkvPool = OkvPool(sagaId)
 
   /** Deposit a key. WAL first, memory second.
    *  Returns Left if the key already has an owner. */

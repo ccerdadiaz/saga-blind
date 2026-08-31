@@ -10,6 +10,8 @@ lazy val root = (project in file("."))
       // "io.github.ccerdadiaz" %% "saga-graph" % "0.1.0",  // when published
       // JSON — pool payload
       "com.lihaoyi"   %% "ujson"       % "3.3.1",
+      // minimal http rest
+      "com.lihaoyi" %% "cask" % "0.9.4",
       // JSONPath — compensation extractors
       "com.jayway.jsonpath" % "json-path" % "3.0.0",
       // SQLite — WAL store
