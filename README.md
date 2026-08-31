@@ -1,81 +1,35 @@
 # saga-blind
 
 > "In the kingdom of the blind, the one-eyed man is the king."  
+> — and here, the one-eyed man is the WAL.
 
-**saga-blind** is a dynamic SAGA orchestration runtime that executes business logic it has never seen.
+**saga-blind** is a SAGA orchestration runtime that executes business logic it has never seen.
 
-The engine is blind to domain. It does not know what a `smithy` is, or what a `measurements` step does, or what data flows between them. It only knows three things:
+This project exists because the combination of ideas it explores is interesting to build and worth understanding — not because it solves a problem better than existing tools. It is an honest aggregation of known theory and practice, pushing some of those ideas a little further than usual and seeing what happens.
 
-- There is a WAL. Every state transition is durable before it happens.
-- There is a data pool. Every step reads from it and writes to it.
-- There is compensation. If anything fails, the engine knows how to go back.
+## What it does
 
-Everything else — the steps, the logic, the data — arrives at runtime, in a jar, described by a DSL the engine reads from a watched folder.
+saga-blind runs as a service. It starts with an empty registry and waits. When a `.saga` definition file appears in its watched folder, it registers the saga by name. When a client sends a launch request with a name and some initial data, the engine loads the jar declared in the definition, instantiates the steps, and runs the saga.
 
-## Why this exists
+The engine never knows what the steps do. It only knows:
 
-Honestly? Because it was an interesting problem to build.
+- There is a WAL. Every state transition is written to disk before it happens.
+- There is a pool. Steps read from it and write to it. That is how they communicate.
+- There is compensation. If a mandatory step fails, the engine knows how to go back.
 
-The idea of a saga engine that knows nothing about the business logic it orchestrates — that loads steps, data contracts, and compensation rules at runtime from jars is architecturally provocative. Whether it is also useful in production is a question this project exists to answer.
-
-The secondary goal is to find out how far you can push dynamic class loading and a shared data pool before the design breaks down. There are known failure modes. We are building this to understand them, not to pretend they do not exist.
-
-And, obviously, the Dark Lord will eventually be satisfied.
-
-## Risk
-
-This is not a safe design. It comes with real dangers that cannot be fully mitigated:
-
-- **No type safety at runtime.** Steps exchange data through a pool of opaque JSON values. A step that deposits the wrong type, the wrong key, or nothing at all will not be caught until execution — and by then, some actions may already be irreversible.
-- **Dynamic class loading is a security surface.** Any jar dropped in the watched folder will be loaded and executed. In an uncontrolled environment, this is a serious vulnerability. saga-blind assumes a trusted deployment context.
-- **Compensation depends on what steps deposit.** If a step fails before depositing its compensation arguments, the engine cannot roll back that step. The WAL will record the failure; the resource may be lost.
-- **The jar is a black box.** The engine cannot verify that a step does what its descriptor claims. A lying descriptor is a runtime explosion waiting to happen.
-
-These are not bugs to be fixed. They are the price of the flexibility this design provides. Use accordingly.
+Everything else — the steps, the logic, the data — arrives at runtime.
 
 ## How it works
 
-```
-/inbox/goblin-campaign.saga   ← drop a DSL definition here
-/libs/goblin-services.jar     ← drop the implementation here
+**1. Register a saga definition**
 
-saga-blind picks them up, loads the jar, builds the graph,
-starts the saga — without restarting, without recompiling.
-```
-
-The engine was running before it knew what a goblin was. The same engine, without modification, can orchestrate completely different sagas by dropping different jars and DSL files.
-
-## The pool
-
-Each saga instance has an isolated **Owner Key Value (OKV) blackboard** — a shared data pool where steps deposit and consume data.
-
-- Every key has exactly one owner — the step that deposited it.
-- No two steps can claim the same key. The engine enforces this structurally.
-- The full pool is persisted in the WAL as deltas. If the process dies, the pool survives.
-
-Sequential steps can consume what previous steps deposited. Parallel steps deposit independently. The join waits for all owners to report — not in order, but complete.
-
-## Compensation
-
-Compensation parameters are declared as **JSONPath extractors** over the pool:
-
-```yaml
-steps:
-  - id: smithy
-    class: com.goblin.SmithyService
-    compensationExtractors:
-      - key: weaponId
-        path: "$.weapon.id"
-        type: UUID
-```
-
-The engine extracts `weaponId` from the pool after `smithy` executes, persists it in the WAL, and uses it to compensate if needed — without knowing what a weapon is.
-
-## The DSL
+Drop a `.saga` file in the watched folder:
 
 ```
-saga: goblin-campaign
-jar: /libs/goblin-services.jar
+# definitions/armour-yourself.saga
+
+saga: armour-yourself
+jar: /services/goblin-armour.jar
 
 steps:
   mandatory: measurements
@@ -86,29 +40,110 @@ steps:
   bestEffort: notification
 ```
 
-Drop it in `/inbox`. The engine does the rest.
+The engine picks it up immediately and registers it by name. No restart needed.
 
-## Control
+**2. Launch an instance**
+
+```bash
+POST /sagas/launch
+{
+  "definition": "armour-yourself",
+  "params": {
+    "allergyProfile": "none",
+    "estimatedAge": 47,
+    "skinColour": "green"
+  }
+}
+
+→ 202 { "sagaId": "...", "status": "launched" }
+```
+
+The params become the initial contents of the saga's data pool, owned by `__init__`. Steps read what they need from the pool and deposit their outputs back — that is how data flows between steps without the engine knowing what it means.
+
+**3. Query instances**
+
+```bash
+GET /sagas/available   → registered saga names
+GET /sagas             → all instances with status
+```
+
+## The pool
+
+Each saga instance has an isolated **Owner Key Value (OKV)** pool — a shared data space where steps deposit and consume values.
+
+- Every key has exactly one owner — the step that deposited it.
+- No two steps can claim the same key. The engine enforces this structurally, at both the application and database level.
+- The full pool is persisted to the WAL as deltas after each step. If the process dies, the pool survives and can be reconstructed.
+
+Sequential steps consume what previous steps deposited. Parallel steps deposit independently. The join waits for all to report — not in order, but complete.
+
+Values in the pool are arbitrary JSON — nested objects, arrays of objects, whatever the step produces. The engine does not interpret them.
+
+## Compensation
+
+Compensation parameters are declared as JSONPath extractors in the step descriptor:
+
+```scala
+CompensationExtractor(key = "weaponId", path = "$.weapon.id", argType = ArgType.UUID)
+```
+
+After a step executes, the engine extracts the declared values from the pool and persists them in the WAL. If compensation is needed, those values are what gets passed to the compensate method — without the engine knowing what a weapon is.
+
+## The jar contract
+
+Every step class in the jar implements one trait:
+
+```scala
+trait SagaStepProvider:
+  def descriptor: StepDescriptor         // declares id, kind, compensation extractors
+  def execute(pool: OkvPool): Either[Throwable, Unit]
+  def compensate(args: Map[String, String]): Either[Throwable, Unit]
+```
+
+The engine loads the jar at launch time using a dedicated `URLClassLoader` per saga instance — full class isolation between concurrent sagas. Each classloader is released when its saga completes.
+
+## The service registry
+
+saga-blind maintains a local registry of available saga definitions — populated by the FileWatcher as `.saga` files appear or disappear. Clients refer to sagas by name only; the engine resolves the name to a definition internally. Where the definition lives on disk is not the client's concern.
+
+## Risk
+
+This is not a safe design by default. Some of the dangers are inherent to the approach:
+
+- **No type safety at runtime.** Steps exchange data through a pool of opaque JSON values. A step that deposits the wrong key or the wrong type will not be caught until execution.
+- **Dynamic class loading is a security surface.** Any jar the definition points to will be loaded and executed. saga-blind assumes a trusted deployment environment.
+- **Compensation depends on what steps deposit.** If a step fails before depositing its compensation arguments, the engine cannot roll back that step. The WAL records the failure; the resource may be lost.
+- **Memory pressure under load.** One `URLClassLoader` per saga instance means one copy of the jar's classes per running saga. With many concurrent sagas and large jars, heap pressure is real and worth monitoring. The engine exposes JVM stats for this purpose.
+
+These are not defects to be fixed later. They are the known cost of the flexibility the design provides.
+
+## Configuration
 
 ```
-saga-blind list              # running, done, failed sagas
-saga-blind stop  <sagaId>    # pause
-saga-blind start <sagaId>    # resume
-saga-blind drop  <sagaId>    # remove
+SAGA_BLIND_DB       SQLite database path     (default: saga-blind.db)
+SAGA_BLIND_WATCH    watched definitions dir  (default: ./definitions)
+SAGA_BLIND_HOST     HTTP bind host           (default: 0.0.0.0)
+SAGA_BLIND_PORT     HTTP port                (default: 7777)
 ```
 
 ## Relation to saga-graph
 
-saga-blind uses [saga-graph](https://github.com/ccerdadiaz/saga-graph) as its compensation engine.
-saga-graph handles the WAL, the LIFO compensation, and the ZombieHunter recovery.
-saga-blind handles everything the engine should not need to know.
+saga-blind is built on top of [saga-graph](https://github.com/ccerdadiaz/saga-graph), which provides the WAL, LIFO compensation, and ZombieHunter recovery.
 
-They are separate projects. saga-graph runs fine without saga-blind.
-saga-blind would not exist without saga-graph.
+saga-graph works fine without saga-blind. saga-blind would not exist without saga-graph.
 
 ## Status
 
-Early design phase. The goblins are being recruited.
+Core layers implemented and tested:
+- WAL store (SQLite)
+- OKV pool with persistence and WAL-first writes
+- Dynamic jar loading with classloader isolation
+- DSL parser
+- HTTP runtime with FileWatcher and service registry
+
+Compensation execution, ZombieHunter forward-first recovery, and control endpoints are next.
+
+The goblins are being armed.
 
 ## License
 
