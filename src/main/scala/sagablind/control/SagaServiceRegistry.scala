@@ -14,7 +14,7 @@ import java.nio.file.{Files, Path}
 //   Playing → Paused   (pause)
 //   Paused  → Playing  (continue)
 //   Playing | Paused → Stopped  (stop — compensates in-flight instances)
-//   Stopped → Ejected  (remove — only when no instances remain)
+//   Stopped → Removed  (remove — only when no instances remain)
 
 case class RegistryEntry(
   definition: SagaDefinition,
@@ -118,3 +118,14 @@ class SagaServiceRegistry:
     else
       try Right(Files.readString(path))
       catch case e: Exception => Left(s"Cannot read '$path': ${e.getMessage}")
+
+  /** Stop all active definitions — called during engine shutdown.
+   *  Playing and Paused definitions transition to Stopped.
+   *  In-flight instances will compensate when their current step finishes. */
+  def stopAll(): Unit =
+    registry.keys.toList.foreach: name =>
+      registry.get(name).foreach: entry =>
+        entry.status match
+          case DefinitionStatus.Playing | DefinitionStatus.Paused =>
+            registry(name) = entry.copy(status = DefinitionStatus.Stopped)
+          case _ => ()

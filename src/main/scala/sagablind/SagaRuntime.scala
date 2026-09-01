@@ -65,3 +65,40 @@ class SagaRuntime(dbPath: String, watchDir: String):
   def list(): List[SagaRow]          = store.allSagas()
   def available(): List[String]      = serviceReg.available
   def definitions(): List[RegistryEntry] = serviceReg.all
+
+  // ── Soft shutdown ─────────────────────────────────────────────────────────
+
+  /** Soft shutdown — stops all definitions, waits for in-flight instances,
+   *  verifies WAL state, then closes the engine cleanly.
+   *  Steps have TTL so this always terminates. */
+  def shutdown(): Unit =
+    println("[SagaRuntime] shutdown initiated — stopping all definitions")
+
+    // 1. reject new launches
+    serviceReg.stopAll()
+
+    // 2. wait for all in-flight instances to finish
+    val pollInterval = 500
+    while inFlight.values.sum > 0 do
+      println(s"[SagaRuntime] waiting for ${inFlight.values.sum} in-flight instance(s)...")
+      Thread.sleep(pollInterval)
+
+    println("[SagaRuntime] all instances finished — verifying WAL")
+
+    // 3. verify WAL — log any instances not in a terminal state
+    val anomalies = store.allSagas().filter: row =>
+      row.status match
+        case SagaStatus.Done | SagaStatus.Compensated | SagaStatus.Failed => false
+        case _ => true
+
+    if anomalies.nonEmpty then
+      println(s"[SagaRuntime] WARNING — ${anomalies.size} instance(s) not in terminal state:")
+      anomalies.foreach(r => println(s"  ${r.sagaId.value} → ${r.status}"))
+    else
+      println("[SagaRuntime] WAL verified — all instances in terminal state")
+
+    // 4. close cleanly
+    watcher.stop()
+    store.close()
+    println("[SagaRuntime] shutdown complete")
+    System.exit(0)

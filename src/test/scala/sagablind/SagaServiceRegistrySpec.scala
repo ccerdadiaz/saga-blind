@@ -132,3 +132,38 @@ class SagaServiceRegistrySpec extends AnyFlatSpec with Matchers with BeforeAndAf
     registry.pause("goblin-campaign")
     registry.all.size shouldBe 1
     registry.all.head.status shouldBe DefinitionStatus.Paused
+
+  // ── stopAll ───────────────────────────────────────────────────────────────
+
+  it should "stop all Playing and Paused definitions on stopAll" in:
+    val sagaFile2 = Files.createTempFile("test-saga-2", ".saga")
+    Files.writeString(sagaFile2, """
+      |saga: goblin-patrol
+      |jar: /libs/goblin.jar
+      |steps:
+      |  - id: patrol
+      |    kind: mandatory
+      |    class: com.goblin.Patrol
+    """.stripMargin)
+
+    registry.publish(sagaFile)   // goblin-campaign → Playing
+    registry.publish(sagaFile2)  // goblin-patrol   → Playing
+    registry.pause("goblin-campaign")  // → Paused
+
+    registry.stopAll()
+
+    registry.statusOf("goblin-campaign") shouldBe Some(DefinitionStatus.Stopped)
+    registry.statusOf("goblin-patrol")   shouldBe Some(DefinitionStatus.Stopped)
+
+    Files.deleteIfExists(sagaFile2)
+
+  it should "not affect already Stopped definitions on stopAll" in:
+    registry.publish(sagaFile)
+    registry.stop("goblin-campaign")
+    registry.stopAll()  // idempotent on Stopped
+    registry.statusOf("goblin-campaign") shouldBe Some(DefinitionStatus.Stopped)
+
+  it should "reject new launches after stopAll" in:
+    registry.publish(sagaFile)
+    registry.stopAll()
+    registry.resolve("goblin-campaign") shouldBe a[Left[?, ?]]

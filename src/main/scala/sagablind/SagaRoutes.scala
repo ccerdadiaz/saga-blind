@@ -109,3 +109,15 @@ class SagaRoutes(runtime: SagaRuntime) extends cask.Routes:
       statusCode = 400,
       headers    = Seq("Content-Type" -> "application/json"),
     )
+
+  @cask.post("/engine/shutdown")
+  def shutdown(): cask.Response[String] =
+    // Run shutdown in a separate thread — response must return before System.exit
+    val thread = Thread(() => runtime.shutdown(), "saga-blind-shutdown")
+    thread.setDaemon(false)
+    thread.start()
+    cask.Response(
+      ujson.Obj("message" -> "shutdown initiated — waiting for in-flight instances").toString,
+      statusCode = 202,
+      headers    = Seq("Content-Type" -> "application/json"),
+    )
