@@ -154,6 +154,13 @@ Playing → Pause  → Playing (continue)
 Playing → Stop   → (compensates in-flight) → Stopped → Remove
 ```
 
+Modifying a `.saga` file while instances are in flight is not supported.
+The engine does not version saga definitions — a mid-flight change would
+create two versions of the same saga running concurrently with no way to
+reconcile them. To update a definition: stop the saga, wait for in-flight
+instances to finish, delete the file, and drop the new version.
+The cost of versioning outweighs the convenience of hot-modification.
+
 ## Semantic validation
 
 When a `.saga` file is loaded, the engine validates that every `from` expression references an owner that has already executed at that point in the definition. A step cannot read from an owner that appears later — this is detected at load time, before any step runs.

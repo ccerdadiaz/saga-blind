@@ -10,13 +10,13 @@ import scala.util.Try
 // Watches a directory for .saga files.
 // On CREATED → publishes to SagaServiceRegistry
 // On DELETED → withdraws from SagaServiceRegistry
-// On MODIFIED → re-publishes (updates the definition)
+// On MODIFIED → not supported by design 
 //
 // Runs in a dedicated daemon thread — does not block the HTTP server.
 
 class FileWatcher(
   watchDir:   Path,
-  registry:   SagaServiceRegistry,
+  registry:   SagaControl,
   onPublish:  SagaDefinition => Unit = _ => (),
   onWithdraw: String => Unit         = _ => (),
   onError:    String => Unit         = msg => System.err.println(s"[FileWatcher] $msg"),
@@ -28,7 +28,7 @@ class FileWatcher(
     if !Files.exists(watchDir) then
       Files.createDirectories(watchDir)
 
-    watchDir.register(watchService, ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY)
+    watchDir.register(watchService, ENTRY_CREATE, ENTRY_DELETE)
 
     Files.list(watchDir)
       .filter(_.toString.endsWith(".saga"))
@@ -57,7 +57,7 @@ class FileWatcher(
             if filename.endsWith(".saga") then
               val fullPath = watchDir.resolve(filename)
               kind match
-                case ENTRY_CREATE | ENTRY_MODIFY =>
+                case ENTRY_CREATE =>
                   registry.publish(fullPath) match
                     case Right(definition) =>
                       println(s"[FileWatcher] published '${definition.id}'")
@@ -65,7 +65,7 @@ class FileWatcher(
                     case Left(error) =>
                       onError(s"Failed to publish '$fullPath': $error")
                 case ENTRY_DELETE =>
-                  registry.withdrawByPath(fullPath)
+                  registry.withdraw(filename.stripSuffix(".saga"))
                   println(s"[FileWatcher] withdrawn '$filename'")
                   onWithdraw(filename)
                 case _ => ()

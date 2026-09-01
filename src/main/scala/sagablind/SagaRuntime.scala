@@ -1,6 +1,6 @@
 package sagablind
 
-import sagablind.control.{FileWatcher, SagaRegistry, SagaServiceRegistry, RegistryEntry}
+import sagablind.control.{FileWatcher, SagaControl, Saga}
 import sagablind.core.*
 import sagablind.loader.JarLoader
 import sagablind.pool.PersistentOkvPool
@@ -19,12 +19,12 @@ class SagaRuntime(
   stepTtl:     Duration = 30.seconds,
   zhScanEvery: Duration = 10.seconds,
 ):
-  private val store      = WalStore(dbPath)
-  private val jarLoader  = JarLoader()
-  private val serviceReg = SagaServiceRegistry()
-  private val executor   = SagaExecutor(store, jarLoader, serviceReg)
-  private val watcher    = FileWatcher(Paths.get(watchDir), serviceReg)
-  private val zh         = ZombieHunter(store, jarLoader, stepTtl, zhScanEvery)
+  private val store       = WalStore(dbPath)
+  private val jarLoader   = JarLoader()
+  private val sagaControl = SagaControl()
+  private val executor    = SagaExecutor(store, jarLoader, sagaControl)
+  private val watcher     = FileWatcher(Paths.get(watchDir), sagaControl)
+  private val zh          = ZombieHunter(store, jarLoader, stepTtl, zhScanEvery)
 
   // tracks running instance count per definition name
   private val inFlight: scala.collection.concurrent.TrieMap[String, Int] =
@@ -40,34 +40,39 @@ class SagaRuntime(
 
   def launch(sagaName: String, params: Map[String, ujson.Value]): Either[String, SagaId] =
     for
-      definition <- serviceReg.resolve(sagaName)
-      sagaId      = SagaId.generate()
-      providers  <- jarLoader.load(sagaId, definition.jarPath, definition.steps.flatMap:
-                      case SagaElement.Single(d)    => List(d)
-                      case SagaElement.Parallel(ds) => ds
-                    )
-      pool        = PersistentOkvPool(sagaId, store)
-      _          <- pool.init(params)
-      _           = inFlight.updateWith(sagaName)(n => Some(n.getOrElse(0) + 1))
-      _          <- executor.execute(sagaId, definition, providers, pool)
-      _           = inFlight.updateWith(sagaName)(n => Some(math.max(0, n.getOrElse(1) - 1)))
+      saga      <- sagaControl.get(sagaName)
+      _         <- Either.cond(
+                   saga.status == DefinitionStatus.Playing,
+                   (),
+                   s"Saga '$sagaName' is ${saga.status} — not accepting new instances"
+                 )
+      sagaId     = SagaId.generate()
+      providers <- jarLoader.load(sagaId, saga.definition.jarPath, saga.definition.steps.flatMap:
+                   case SagaElement.Single(d)    => List(d)
+                   case SagaElement.Parallel(ds) => ds
+                 )
+      pool       = PersistentOkvPool(sagaId, store)
+      _         <- pool.init(params)
+      _          = inFlight.updateWith(sagaName)(n => Some(n.getOrElse(0) + 1))
+      _         <- executor.execute(sagaId, saga.definition, providers, pool)
+      _          = inFlight.updateWith(sagaName)(n => Some(math.max(0, n.getOrElse(1) - 1)))
     yield sagaId
 
   // ── Control ───────────────────────────────────────────────────────────────
 
-  def pause(name: String): Either[String, Unit]    = serviceReg.pause(name)
-  def continue(name: String): Either[String, Unit] = serviceReg.continue(name)
-  def stop(name: String): Either[String, Unit]     = serviceReg.stop(name)
+  def pause(name: String): Either[String, Unit]    = sagaControl.pause(name)
+  def continue(name: String): Either[String, Unit] = sagaControl.continue(name)
+  def stop(name: String): Either[String, Unit]     = sagaControl.stop(name)
 
   def remove(name: String): Either[String, Unit] =
-    serviceReg.remove(name, inFlight.getOrElse(name, 0))
+    sagaControl.remove(name, inFlight.getOrElse(name, 0))
 
   // ── Soft shutdown ─────────────────────────────────────────────────────────
 
   def shutdown(): Unit =
     println("[SagaRuntime] shutdown initiated — stopping engine and ZombieHunter")
 
-    serviceReg.stopAll()
+    sagaControl.stopAll()
 
     while inFlight.values.sum > 0 do
       println(s"[SagaRuntime] waiting for ${inFlight.values.sum} in-flight instance(s)...")
@@ -95,5 +100,5 @@ class SagaRuntime(
   // ── Query ─────────────────────────────────────────────────────────────────
 
   def list(): List[SagaRow]              = store.allSagas()
-  def available(): List[String]          = serviceReg.available
-  def definitions(): List[RegistryEntry] = serviceReg.all
+  def available(): List[String]          = sagaControl.available
+  def definitions(): List[Saga] = sagaControl.all

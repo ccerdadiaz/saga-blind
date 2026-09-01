@@ -1,6 +1,6 @@
 package sagablind.core
 
-import sagablind.control.SagaServiceRegistry
+import sagablind.control.SagaControl
 import sagablind.loader.{JarLoader, SagaStepProvider}
 import sagablind.pool.PersistentOkvPool
 import sagablind.store.WalStore
@@ -16,7 +16,7 @@ import scala.concurrent.duration.*
 // Parameter binding: the engine extracts args from the OKV using ParamExtractor
 // before calling execute/compensate. The jar knows nothing about the OKV.
 
-class SagaExecutor(store: WalStore, jarLoader: JarLoader, registry: SagaServiceRegistry):
+class SagaExecutor(store: WalStore, jarLoader: JarLoader, registry: SagaControl):
 
   def execute(
     sagaId:     SagaId,

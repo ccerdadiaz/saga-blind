@@ -5,8 +5,8 @@ import sagablind.dsl.SagaDslParser
 
 import java.nio.file.{Files, Path}
 
-// ── SagaServiceRegistry ─────────────────────────────────────────────────────
-// Local service registry — maps saga names to definitions and their status.
+// ── SagaControl  ─────────────────────────────────────────────────────
+// Keeps track and manages sagas and it's lifecicles.
 // Populated by the FileWatcher. Queried by the HTTP layer.
 //
 // Definition lifecycle — play/pause/stop/remove:
@@ -16,14 +16,14 @@ import java.nio.file.{Files, Path}
 //   Playing | Paused → Stopped  (stop — compensates in-flight instances)
 //   Stopped → Removed  (remove — only when no instances remain)
 
-case class RegistryEntry(
+case class Saga(
   definition: SagaDefinition,
   status:     DefinitionStatus,
 )
 
-class SagaServiceRegistry:
+class SagaControl:
 
-  private val registry: scala.collection.mutable.Map[String, RegistryEntry] =
+  private val sagas: scala.collection.mutable.Map[String, Saga] =
     scala.collection.mutable.LinkedHashMap.empty
 
   // ── Publish / Withdraw ────────────────────────────────────────────────────
@@ -32,30 +32,16 @@ class SagaServiceRegistry:
     for
       content    <- readFile(sagaPath)
       definition <- SagaDslParser.parse(content)
-      _           = registry(definition.id) = RegistryEntry(definition, DefinitionStatus.Playing)
+      _           = sagas(definition.id) = Saga(definition, DefinitionStatus.Playing)
     yield definition
 
   def withdraw(sagaName: String): Unit =
-    registry.remove(sagaName)
+    sagas.remove(sagaName)
 
-  def withdrawByPath(sagaPath: Path): Unit =
-    readFile(sagaPath)
-      .flatMap(SagaDslParser.parse)
-      .foreach(d => registry.remove(d.id))
-
-  // ── Resolve ───────────────────────────────────────────────────────────────
-
-  /** Resolve a name to a definition — only if Playing. */
-  def resolve(name: String): Either[String, SagaDefinition] =
-    registry.get(name) match
-      case None                                              => Left(s"No saga registered under name '$name'")
-      case Some(e) if e.status == DefinitionStatus.Playing  => Right(e.definition)
-      case Some(e)                                           => Left(s"Saga '$name' is ${e.status} — not accepting new instances")
-
-  /** Resolve regardless of status — for internal use. */
-  def resolveAny(name: String): Either[String, RegistryEntry] =
-    registry.get(name).toRight(s"No saga registered under name '$name'")
-
+  // ── get & status  ──────────────────────────────────────────────────────────
+  def get(name: String): Either[String, Saga] =
+    sagas.get(name).toRight(s"No saga registered under name '$name'")
+                                         
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   def pause(name: String): Either[String, Unit] =
@@ -65,38 +51,38 @@ class SagaServiceRegistry:
     transition(name, DefinitionStatus.Paused, DefinitionStatus.Playing)
 
   def stop(name: String): Either[String, Unit] =
-    registry.get(name) match
+    sagas.get(name) match
       case None => Left(s"No saga registered under name '$name'")
       case Some(e) if e.status == DefinitionStatus.Removed =>
         Left(s"Saga '$name' is already removed")
       case Some(e) =>
-        registry(name) = e.copy(status = DefinitionStatus.Stopped)
+        sagas(name) = e.copy(status = DefinitionStatus.Stopped)
         Right(())
 
   /** Eject — only allowed when Stopped and no instances remain.
    *  instanceCount is provided by SagaRuntime which tracks running instances. */
   def remove(name: String, instanceCount: Int): Either[String, Unit] =
-    registry.get(name) match
+    sagas.get(name) match
       case None => Left(s"No saga registered under name '$name'")
       case Some(e) if e.status != DefinitionStatus.Stopped =>
         Left(s"Saga '$name' must be Stopped before removing (current: ${e.status})")
       case Some(_) if instanceCount > 0 =>
         Left(s"Saga '$name' still has $instanceCount instance(s) in flight — wait for them to complete")
       case Some(_) =>
-        registry.remove(name)
+        sagas.remove(name)
         Right(())
 
   // ── Query ─────────────────────────────────────────────────────────────────
 
   def statusOf(name: String): Option[DefinitionStatus] =
-    registry.get(name).map(_.status)
+    sagas.get(name).map(_.status)
 
   def available: List[String] = 
-    registry.filter(_._2.status == DefinitionStatus.Playing).keys.toList.sorted
+    sagas.filter(_._2.status == DefinitionStatus.Playing).keys.toList.sorted
 
-  def all: List[RegistryEntry] = registry.values.toList
+  def all: List[Saga] = sagas.values.toList
 
-  def size: Int = registry.size
+  def size: Int = sagas.size
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -105,12 +91,12 @@ class SagaServiceRegistry:
     from: DefinitionStatus,
     to:   DefinitionStatus,
   ): Either[String, Unit] =
-    registry.get(name) match
+    sagas.get(name) match
       case None => Left(s"No saga registered under name '$name'")
       case Some(e) if e.status != from =>
         Left(s"Saga '$name' is ${e.status} — cannot transition to $to")
       case Some(e) =>
-        registry(name) = e.copy(status = to)
+        sagas(name) = e.copy(status = to)
         Right(())
 
   private def readFile(path: Path): Either[String, String] =
@@ -123,9 +109,9 @@ class SagaServiceRegistry:
    *  Playing and Paused definitions transition to Stopped.
    *  In-flight instances will compensate when their current step finishes. */
   def stopAll(): Unit =
-    registry.keys.toList.foreach: name =>
-      registry.get(name).foreach: entry =>
+    sagas.keys.toList.foreach: name =>
+      sagas.get(name).foreach: entry =>
         entry.status match
           case DefinitionStatus.Playing | DefinitionStatus.Paused =>
-            registry(name) = entry.copy(status = DefinitionStatus.Stopped)
+            sagas(name) = entry.copy(status = DefinitionStatus.Stopped)
           case _ => ()
