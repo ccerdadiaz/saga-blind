@@ -3,13 +3,14 @@ package sagablind.core
 // ── SagaValidator ────────────────────────────────────────────────────────────
 // Validates a SagaDefinition semantically before execution.
 //
-// Rule: a step can only reference owners that have already executed.
-//   - __init__ is always available
-//   - a step can reference any owner that appears before it in execution order
-//   - parallel steps can only reference owners before their parallel block
-//   - no step can reference an owner that appears later in the definition
+// Rule for inputMappings: a step can only reference owners that have already
+// executed — owners that appear before it in the definition.
 //
-// This is detected at load time — before a single step executes.
+// Rule for compensateMappings: a step can reference any owner that has already
+// executed OR its own id — because when compensation runs, the step itself
+// has already deposited its outputs into the pool.
+//
+// __init__ is always available for both.
 
 object SagaValidator:
 
@@ -19,30 +20,47 @@ object SagaValidator:
 
     definition.steps.foreach:
       case SagaElement.Single(descriptor) =>
-        validateMappings(descriptor, availableOwners, errors)
+        validateInputMappings(descriptor, availableOwners, errors)
+        validateCompensateMappings(descriptor, availableOwners + descriptor.id, errors)
         availableOwners += descriptor.id
 
       case SagaElement.Parallel(steps) =>
         // parallel steps can only see owners before the block — not siblings
-        steps.foreach(d => validateMappings(d, availableOwners, errors))
+        steps.foreach: d =>
+          validateInputMappings(d, availableOwners, errors)
+          validateCompensateMappings(d, availableOwners + d.id, errors)
         // after the JOIN all parallel owners become available
         availableOwners ++= steps.map(_.id)
 
     if errors.isEmpty then Right(())
     else Left(errors.mkString("\n"))
 
-  private def validateMappings(
+  private def validateInputMappings(
     descriptor:      StepDescriptor,
     availableOwners: Set[String],
     errors:          scala.collection.mutable.ListBuffer[String],
   ): Unit =
-    val allMappings = descriptor.inputMappings ++ descriptor.compensateMappings
-    allMappings.foreach: mapping =>
+    descriptor.inputMappings.foreach: mapping =>
       OkvRef.parse(mapping.from) match
         case Left(err) =>
-          errors += s"Step '${descriptor.id}': invalid 'from' expression — $err"
+          errors += s"Step '${descriptor.id}': invalid 'from' in inputs — $err"
         case Right(ref) =>
           if !availableOwners.contains(ref.owner) then
-            errors += s"Step '${descriptor.id}': param '${mapping.param}' references " +
+            errors += s"Step '${descriptor.id}': input param '${mapping.param}' references " +
                       s"owner '${ref.owner}' which has not executed yet — " +
-                      s"available owners: ${availableOwners.mkString(", ")}"
+                      s"available: ${availableOwners.mkString(", ")}"
+
+  private def validateCompensateMappings(
+    descriptor:               StepDescriptor,
+    availableOwnersWithSelf:  Set[String],   // includes the step's own id
+    errors:                   scala.collection.mutable.ListBuffer[String],
+  ): Unit =
+    descriptor.compensateMappings.foreach: mapping =>
+      OkvRef.parse(mapping.from) match
+        case Left(err) =>
+          errors += s"Step '${descriptor.id}': invalid 'from' in compensate — $err"
+        case Right(ref) =>
+          if !availableOwnersWithSelf.contains(ref.owner) then
+            errors += s"Step '${descriptor.id}': compensate param '${mapping.param}' references " +
+                      s"owner '${ref.owner}' which will not be available at compensation time — " +
+                      s"available: ${availableOwnersWithSelf.mkString(", ")}"

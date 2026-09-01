@@ -142,6 +142,7 @@ class SagaExecutor(store: WalStore, jarLoader: JarLoader, registry: SagaServiceR
     providers: Map[String, SagaStepProvider],
     pool:      PersistentOkvPool,
   ): Unit =
+    
     steps.foreach: descriptor =>
       providers.get(descriptor.id).foreach: provider =>
         ParamExtractor.resolve(descriptor.compensateMappings, pool.memory) match
