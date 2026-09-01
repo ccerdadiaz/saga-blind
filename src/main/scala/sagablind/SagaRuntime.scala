@@ -7,18 +7,24 @@ import sagablind.pool.PersistentOkvPool
 import sagablind.store.{WalStore, SagaRow}
 
 import java.nio.file.Paths
+import scala.concurrent.duration.*
 
 // ── SagaRuntime ──────────────────────────────────────────────────────────────
 // The engine. Wires together all layers.
-// Exposes launch() and control operations (pause/continue/stop/remove).
+// Engine and ZombieHunter start and stop together as a pair.
 
-class SagaRuntime(dbPath: String, watchDir: String):
-
+class SagaRuntime(
+  dbPath:      String,
+  watchDir:    String,
+  stepTtl:     Duration = 30.seconds,
+  zhScanEvery: Duration = 10.seconds,
+):
   private val store      = WalStore(dbPath)
   private val jarLoader  = JarLoader()
   private val serviceReg = SagaServiceRegistry()
   private val executor   = SagaExecutor(store, jarLoader, serviceReg)
   private val watcher    = FileWatcher(Paths.get(watchDir), serviceReg)
+  private val zh         = ZombieHunter(store, jarLoader, stepTtl, zhScanEvery)
 
   // tracks running instance count per definition name
   private val inFlight: scala.collection.concurrent.TrieMap[String, Int] =
@@ -27,12 +33,8 @@ class SagaRuntime(dbPath: String, watchDir: String):
   def start(): Unit =
     store.init()
     watcher.start()
+    zh.start()
     println(s"[SagaRuntime] started — db=$dbPath watching=$watchDir")
-
-  def stop(): Unit =
-    watcher.stop()
-    store.close()
-    println("[SagaRuntime] stopped")
 
   // ── Launch ────────────────────────────────────────────────────────────────
 
@@ -60,32 +62,19 @@ class SagaRuntime(dbPath: String, watchDir: String):
   def remove(name: String): Either[String, Unit] =
     serviceReg.remove(name, inFlight.getOrElse(name, 0))
 
-  // ── Query ─────────────────────────────────────────────────────────────────
-
-  def list(): List[SagaRow]          = store.allSagas()
-  def available(): List[String]      = serviceReg.available
-  def definitions(): List[RegistryEntry] = serviceReg.all
-
   // ── Soft shutdown ─────────────────────────────────────────────────────────
 
-  /** Soft shutdown — stops all definitions, waits for in-flight instances,
-   *  verifies WAL state, then closes the engine cleanly.
-   *  Steps have TTL so this always terminates. */
   def shutdown(): Unit =
-    println("[SagaRuntime] shutdown initiated — stopping all definitions")
+    println("[SagaRuntime] shutdown initiated — stopping engine and ZombieHunter")
 
-    // 1. reject new launches
     serviceReg.stopAll()
 
-    // 2. wait for all in-flight instances to finish
-    val pollInterval = 500
     while inFlight.values.sum > 0 do
       println(s"[SagaRuntime] waiting for ${inFlight.values.sum} in-flight instance(s)...")
-      Thread.sleep(pollInterval)
+      Thread.sleep(500)
 
     println("[SagaRuntime] all instances finished — verifying WAL")
 
-    // 3. verify WAL — log any instances not in a terminal state
     val anomalies = store.allSagas().filter: row =>
       row.status match
         case SagaStatus.Done | SagaStatus.Compensated | SagaStatus.Failed => false
@@ -97,8 +86,14 @@ class SagaRuntime(dbPath: String, watchDir: String):
     else
       println("[SagaRuntime] WAL verified — all instances in terminal state")
 
-    // 4. close cleanly
+    zh.stop()
     watcher.stop()
     store.close()
     println("[SagaRuntime] shutdown complete")
     System.exit(0)
+
+  // ── Query ─────────────────────────────────────────────────────────────────
+
+  def list(): List[SagaRow]              = store.allSagas()
+  def available(): List[String]          = serviceReg.available
+  def definitions(): List[RegistryEntry] = serviceReg.all

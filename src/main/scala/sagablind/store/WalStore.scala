@@ -199,3 +199,18 @@ class WalStore(dbPath: String):
     buffer.toMap
 
   def close(): Unit = conn.close()
+
+  /** Insert a step with an explicit timestamp — used in tests to simulate TTL expiry. */
+  def insertStepAt(sagaId: SagaId, stepId: String, kind: StepKind, status: StepStatus, at: String): Unit =
+    val st = conn.prepareStatement(
+      "INSERT INTO saga_step (saga_id, step_id, kind, status, started_at, updated_at) VALUES (?,?,?,?,?,?)"
+    )
+    st.setString(1, sagaId.value)
+    st.setString(2, stepId)
+    st.setString(3, kind.toString)
+    st.setString(4, status.toString)
+    st.setString(5, at)
+    st.setString(6, at)
+    st.executeUpdate()
+    st.close()
+    conn.commit()
