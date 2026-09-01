@@ -38,3 +38,7 @@ class OkvPool(val sagaId: SagaId):
   /** Full snapshot — for reconstruction after failure */
   def snapshot: Map[String, OkvEntry] =
     store.toMap
+
+  /** Read a key by owner and key name — enforces ownership awareness. */
+  def getByOwner(owner: String, key: String): Option[ujson.Value] =
+    store.get(key).filter(_.owner == owner).map(_.value)

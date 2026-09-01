@@ -21,7 +21,9 @@ class SagaServiceRegistrySpec extends AnyFlatSpec with Matchers with BeforeAndAf
       |saga: goblin-campaign
       |jar: /libs/goblin.jar
       |steps:
-      |  mandatory: measurements
+      |  - id: measurements
+      |    kind: mandatory
+      |    class: com.goblin.Measurements
     """.stripMargin)
 
   override def afterEach(): Unit =

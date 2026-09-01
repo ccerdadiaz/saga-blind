@@ -11,19 +11,22 @@ import sagablind.core.*
 //   jar:  <path>
 //
 //   steps:
-//     mandatory:  <stepId>
-//     optional:   <stepId>
-//     bestEffort: <stepId>
-//     parallel:
-//       - <stepId>
-//       - <stepId>
+//     - id: <stepId>
+//       kind: mandatory | optional | bestEffort
+//       class: <className>
+//       inputs:
+//         - param: <paramName>
+//           from: <owner>/<key>[.jsonPath]
+//       compensate:
+//         inputs:
+//           - param: <paramName>
+//             from: <owner>/<key>[.jsonPath]
 //
-// Rules:
-//   - Lines starting with # are comments
-//   - Blank lines are ignored
-//   - Indentation is significant (2 spaces per level)
-//   - Step ids map to class names via the jar's SagaStepProvider.descriptor
-//   - compensationExtractors are declared in the jar, not in the DSL
+//     - parallel:
+//       - id: <stepId>
+//         ...
+//       - id: <stepId>
+//         ...
 
 object SagaDslParser:
 
@@ -39,7 +42,7 @@ object SagaDslParser:
       steps   <- extractSteps(lines)
     yield SagaDefinition(id = sagaId, jarPath = jarPath, steps = steps)
 
-  // ── Header extraction ──────────────────────────────────────────────────
+  // ── Header ────────────────────────────────────────────────────────────────
 
   private def extractHeader(key: String, lines: List[String]): Either[String, String] =
     lines
@@ -48,74 +51,143 @@ object SagaDslParser:
       .filter(_.nonEmpty)
       .toRight(s"Missing or empty '$key:' header")
 
-  // ── Steps extraction ───────────────────────────────────────────────────
+  // ── Steps section ─────────────────────────────────────────────────────────
 
   private def extractSteps(lines: List[String]): Either[String, List[SagaElement]] =
     val stepsIdx = lines.indexWhere(_.trim == "steps:")
-    if stepsIdx < 0 then
-      return Left("Missing 'steps:' section")
+    if stepsIdx < 0 then return Left("Missing 'steps:' section")
 
-    val stepLines = lines.drop(stepsIdx + 1)
-      .takeWhile(l => l.startsWith("  "))  // indented under steps:
+    val stepLines = lines.drop(stepsIdx + 1).takeWhile(l => l.startsWith("  "))
+    if stepLines.isEmpty then return Left("No steps defined")
 
-    parseStepLines(stepLines)
+    parseElements(stepLines)
 
-  private def parseStepLines(lines: List[String]): Either[String, List[SagaElement]] =
+  // ── Element parsing ───────────────────────────────────────────────────────
+
+  private def parseElements(lines: List[String]): Either[String, List[SagaElement]] =
     val elements = scala.collection.mutable.ListBuffer.empty[SagaElement]
     var i = 0
 
     while i < lines.size do
-      val line   = lines(i)
-      val indent = line.takeWhile(_ == ' ').length
+      val line    = lines(i)
       val trimmed = line.trim
+      val indent  = line.takeWhile(_ == ' ').length
 
-      if indent == 2 then  // top-level step keyword
-        if trimmed.startsWith("mandatory:") then
-          val id = trimmed.stripPrefix("mandatory:").trim
-          if id.isEmpty then return Left(s"Empty step id after 'mandatory:' at line ${i+1}")
-          elements += SagaElement.Single(stubDescriptor(id, StepKind.Mandatory))
-          i += 1
+      if indent == 2 && trimmed.startsWith("- parallel:") then
+        // parallel block — collect child steps at indent 4
+        i += 1
+        val parallelLines = lines.drop(i).takeWhile(l => l.takeWhile(_ == ' ').length >= 4)
+        parseParallelSteps(parallelLines) match
+          case Left(err)    => return Left(err)
+          case Right(steps) =>
+            if steps.isEmpty then return Left("Empty parallel block")
+            elements += SagaElement.Parallel(steps)
+            i += parallelLines.size
 
-        else if trimmed.startsWith("optional:") then
-          val id = trimmed.stripPrefix("optional:").trim
-          if id.isEmpty then return Left(s"Empty step id after 'optional:' at line ${i+1}")
-          elements += SagaElement.Single(stubDescriptor(id, StepKind.Optional))
-          i += 1
-
-        else if trimmed.startsWith("bestEffort:") then
-          val id = trimmed.stripPrefix("bestEffort:").trim
-          if id.isEmpty then return Left(s"Empty step id after 'bestEffort:' at line ${i+1}")
-          elements += SagaElement.Single(stubDescriptor(id, StepKind.BestEffort))
-          i += 1
-
-        else if trimmed == "parallel:" then
-          i += 1
-          val parallelSteps = scala.collection.mutable.ListBuffer.empty[StepDescriptor]
-          while i < lines.size && lines(i).takeWhile(_ == ' ').length == 4 do
-            val item = lines(i).trim.stripPrefix("- ").trim
-            if item.isEmpty then return Left(s"Empty step id in parallel block at line ${i+1}")
-            parallelSteps += stubDescriptor(item, StepKind.Mandatory)
-            i += 1
-          if parallelSteps.isEmpty then return Left("Empty parallel block")
-          elements += SagaElement.Parallel(parallelSteps.toList)
-
-        else
-          return Left(s"Unknown step keyword: '$trimmed'")
+      else if indent == 2 && trimmed.startsWith("- id:") then
+        // single step block — collect all lines of this step
+        val stepLines = lines.drop(i).takeWhile: l =>
+          val ind = l.takeWhile(_ == ' ').length
+          ind > 2 || (ind == 2 && l.trim.startsWith("- id:") && l == lines(i))
+        val blockLines = collectBlock(lines, i)
+        parseStep(blockLines) match
+          case Left(err)       => return Left(err)
+          case Right(descriptor) =>
+            elements += SagaElement.Single(descriptor)
+            i += blockLines.size
       else
-        i += 1  // skip unexpected indentation silently
+        i += 1
 
     if elements.isEmpty then Left("No steps defined")
     else Right(elements.toList)
 
-  // ── Stub descriptor ────────────────────────────────────────────────────
-  // The DSL knows the step id. The class name and compensationExtractors
-  // are resolved from the jar at load time — not from the DSL.
-  // className is set to stepId as a convention placeholder.
+  private def parseParallelSteps(lines: List[String]): Either[String, List[StepDescriptor]] =
+    val steps  = scala.collection.mutable.ListBuffer.empty[StepDescriptor]
+    var i      = 0
+    while i < lines.size do
+      val line    = lines(i)
+      val trimmed = line.trim
+      if trimmed.startsWith("- id:") then
+        val block = collectBlock(lines, i)
+        parseStep(block) match
+          case Left(err) => return Left(err)
+          case Right(d)  => steps += d
+        i += block.size
+      else
+        i += 1
+    Right(steps.toList)
 
-  private def stubDescriptor(id: String, kind: StepKind): StepDescriptor =
-    StepDescriptor(
-      id                     = id,
-      kind                   = kind,
-      className              = id,   // resolved against jar at load time
-      compensationExtractors = Nil,  // declared in SagaStepProvider.descriptor
+  /** Collect all lines belonging to a step block starting at index i */
+  private def collectBlock(lines: List[String], start: Int): List[String] =
+    val startIndent = lines(start).takeWhile(_ == ' ').length
+    lines.drop(start).zipWithIndex.takeWhile: (line, idx) =>
+      idx == 0 || line.takeWhile(_ == ' ').length > startIndent || line.trim.isEmpty
+    .map(_._1)
+
+  // ── Step parsing ──────────────────────────────────────────────────────────
+
+  private def parseStep(lines: List[String]): Either[String, StepDescriptor] =
+    val kv = parseKeyValues(lines)
+
+    for
+      id        <- kv.get("id").toRight("Step missing 'id'")
+      className <- kv.get("class").toRight(s"Step '$id' missing 'class'")
+      kind      <- parseKind(kv.getOrElse("kind", "mandatory"), id)
+      inputs     = parseMappings(lines, "inputs:")
+      compensate = parseMappings(lines, "compensate:")
+    yield StepDescriptor(
+      id                 = id,
+      kind               = kind,
+      className          = className,
+      inputMappings      = inputs,
+      compensateMappings = compensate,
     )
+
+  private def parseKind(s: String, stepId: String): Either[String, StepKind] =
+    s.trim.toLowerCase match
+      case "mandatory"   => Right(StepKind.Mandatory)
+      case "optional"    => Right(StepKind.Optional)
+      case "besteffort"  => Right(StepKind.BestEffort)
+      case other         => Left(s"Step '$stepId': unknown kind '$other'")
+
+  // ── Mapping parsing ───────────────────────────────────────────────────────
+
+  private def parseMappings(lines: List[String], section: String): List[ParamMapping] =
+    val sectionIdx = lines.indexWhere(_.trim == section)
+    if sectionIdx < 0 then return Nil
+
+    val sectionIndent = lines(sectionIdx).takeWhile(_ == ' ').length
+    val sectionLines  = lines.drop(sectionIdx + 1)
+      .takeWhile(l => l.takeWhile(_ == ' ').length > sectionIndent)
+
+    // group by "- param:" entries
+    val mappings = scala.collection.mutable.ListBuffer.empty[ParamMapping]
+    var i = 0
+    while i < sectionLines.size do
+      val line    = sectionLines(i)
+      val trimmed = line.trim
+      if trimmed.startsWith("- param:") then
+        val param = trimmed.stripPrefix("- param:").trim
+        // look for 'from:' on next line
+        val fromLine = sectionLines.drop(i + 1)
+          .find(_.trim.startsWith("from:"))
+          .map(_.trim.stripPrefix("from:").trim)
+          .getOrElse("")
+        if param.nonEmpty && fromLine.nonEmpty then
+          mappings += ParamMapping(param = param, from = fromLine)
+      i += 1
+
+    mappings.toList
+
+  // ── Utility ───────────────────────────────────────────────────────────────
+
+  private def parseKeyValues(lines: List[String]): Map[String, String] =
+    lines.flatMap: line =>
+      val trimmed = line.trim.stripPrefix("- ")
+      val colonIdx = trimmed.indexOf(':')
+      if colonIdx > 0 then
+        val key   = trimmed.substring(0, colonIdx).trim
+        val value = trimmed.substring(colonIdx + 1).trim
+        if value.nonEmpty then Some(key -> value) else None
+      else None
+    .toMap

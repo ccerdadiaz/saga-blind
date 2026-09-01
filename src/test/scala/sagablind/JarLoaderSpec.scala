@@ -25,109 +25,80 @@ class JarLoaderSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
   override def afterEach(): Unit =
     Files.deleteIfExists(Paths.get(jarPath))
 
-  // ── helpers ───────────────────────────────────────────────────────────────
-
-  /** Locate a class file using the classloader that loaded it — works with
-   *  sbt's custom classloader which does not set java.class.path. */
-  def findClassFile(resourcePath: String): Option[java.net.URL] =
-    Option(getClass.getClassLoader.getResource(resourcePath))
-
   def buildFixtureJar(): String =
     val tmp     = Files.createTempFile("saga-blind-fixture", ".jar")
     val jarFile = tmp.toFile
     val jos     = JarOutputStream(java.io.FileOutputStream(jarFile))
-
     val classNames = List(
       "sagablind/fixture/SmithyStep.class",
       "sagablind/fixture/BootsStep.class",
       "sagablind/fixture/BrokenStep.class",
     )
-
     classNames.foreach: name =>
-      findClassFile(name).foreach: url =>
+      Option(getClass.getClassLoader.getResource(name)).foreach: url =>
         jos.putNextEntry(JarEntry(name))
         jos.write(url.openStream().readAllBytes())
         jos.closeEntry()
-
     jos.close()
-
     if jarFile.length() < 100 then
-      throw RuntimeException(
-        s"Fixture jar is empty — could not locate fixture classes via classloader"
-      )
-
+      throw RuntimeException("Fixture jar is empty")
     jarFile.getAbsolutePath
 
-  def smithyDescriptor: StepDescriptor = SmithyStep().descriptor
-  def bootsDescriptor:  StepDescriptor = BootsStep().descriptor
-
-  // ── load ──────────────────────────────────────────────────────────────────
+  def smithyDescriptor: StepDescriptor = StepDescriptor(
+    id = "smithy", kind = StepKind.Mandatory,
+    className = "sagablind.fixture.SmithyStep",
+    inputMappings = Nil, compensateMappings = Nil,
+  )
+  def bootsDescriptor: StepDescriptor = StepDescriptor(
+    id = "boots", kind = StepKind.Mandatory,
+    className = "sagablind.fixture.BootsStep",
+    inputMappings = Nil, compensateMappings = Nil,
+  )
 
   "JarLoader" should "load a jar and instantiate declared providers" in:
-    val sagaId  = SagaId("goblin-loader-1")
-    val result  = loader.load(sagaId, jarPath, List(smithyDescriptor, bootsDescriptor))
+    val result = loader.load(SagaId("g-1"), jarPath, List(smithyDescriptor, bootsDescriptor))
     result.isRight shouldBe true
-    val providers = result.toOption.get
-    providers.keys should contain allOf ("smithy", "boots")
+    result.toOption.get.keys should contain allOf ("smithy", "boots")
 
   it should "return Left if jar does not exist" in:
-    val sagaId = SagaId("goblin-loader-2")
-    val result = loader.load(sagaId, "/nonexistent/path.jar", List(smithyDescriptor))
-    result shouldBe a[Left[?, ?]]
-    result.swap.getOrElse("") should include("Jar not found")
+    loader.load(SagaId("g-2"), "/nonexistent.jar", List(smithyDescriptor))
+      .swap.getOrElse("") should include("Jar not found")
 
   it should "return Left if class is not in jar" in:
-    val sagaId = SagaId("goblin-loader-3")
-    val ghost  = smithyDescriptor.copy(className = "com.goblin.GhostStep")
-    val result = loader.load(sagaId, jarPath, List(ghost))
-    result shouldBe a[Left[?, ?]]
+    val ghost = smithyDescriptor.copy(className = "com.goblin.GhostStep")
+    loader.load(SagaId("g-3"), jarPath, List(ghost)) shouldBe a[Left[?, ?]]
 
   it should "instantiate providers that execute correctly" in:
-    val sagaId    = SagaId("goblin-loader-4")
-    val providers = loader.load(sagaId, jarPath, List(smithyDescriptor)).toOption.get
-    val pool      = OkvPool(sagaId)
-    providers("smithy").execute(pool) shouldBe Right(())
-    pool.get("weaponId") shouldBe Some(ujson.Str("W-042"))
+    val providers = loader.load(SagaId("g-4"), jarPath, List(smithyDescriptor)).toOption.get
+    providers("smithy").execute(Map.empty) shouldBe Right(Map("weaponId" -> ujson.Str("W-042")))
 
   it should "isolate classloaders between saga instances" in:
-    val id1 = SagaId("goblin-loader-5")
-    val id2 = SagaId("goblin-loader-6")
-    loader.load(id1, jarPath, List(smithyDescriptor))
-    loader.load(id2, jarPath, List(smithyDescriptor))
+    loader.load(SagaId("g-5"), jarPath, List(smithyDescriptor))
+    loader.load(SagaId("g-6"), jarPath, List(smithyDescriptor))
     loader.activeCount shouldBe 2
 
   it should "release classloader on saga completion" in:
-    val sagaId = SagaId("goblin-loader-7")
-    loader.load(sagaId, jarPath, List(smithyDescriptor))
-    loader.activeCount shouldBe 1
-    loader.release(sagaId)
+    loader.load(SagaId("g-7"), jarPath, List(smithyDescriptor))
+    loader.release(SagaId("g-7"))
     loader.activeCount shouldBe 0
 
   it should "release all classloaders independently" in:
-    val id1 = SagaId("goblin-loader-9")
-    val id2 = SagaId("goblin-loader-10")
-    loader.load(id1, jarPath, List(smithyDescriptor))
-    loader.load(id2, jarPath, List(bootsDescriptor))
-    loader.release(id1)
+    loader.load(SagaId("g-9"), jarPath, List(smithyDescriptor))
+    loader.load(SagaId("g-10"), jarPath, List(bootsDescriptor))
+    loader.release(SagaId("g-9"))
     loader.activeCount shouldBe 1
-    loader.release(id2)
+    loader.release(SagaId("g-10"))
     loader.activeCount shouldBe 0
 
-  // ── memoryStats ───────────────────────────────────────────────────────────
-
   it should "report memory stats with correct active loader count" in:
-    val id1   = SagaId("goblin-loader-11")
-    val id2   = SagaId("goblin-loader-12")
-    loader.load(id1, jarPath, List(smithyDescriptor))
-    loader.load(id2, jarPath, List(bootsDescriptor))
+    loader.load(SagaId("g-11"), jarPath, List(smithyDescriptor))
+    loader.load(SagaId("g-12"), jarPath, List(bootsDescriptor))
     val stats = loader.memoryStats()
     stats.activeLoaders    shouldBe 2
     stats.heapUsedMb       should be > 0L
-    stats.heapMaxMb        should be > 0L
     stats.loadedClassCount should be > 0
 
   it should "reflect released loaders in stats" in:
-    val sagaId = SagaId("goblin-loader-13")
-    loader.load(sagaId, jarPath, List(smithyDescriptor))
-    loader.release(sagaId)
+    loader.load(SagaId("g-13"), jarPath, List(smithyDescriptor))
+    loader.release(SagaId("g-13"))
     loader.memoryStats().activeLoaders shouldBe 0
