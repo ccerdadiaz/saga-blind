@@ -4,9 +4,9 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.BeforeAndAfterEach
 
-import sagablind.control.{SagaControl}
+import sagablind.control.SagaControl
 import sagablind.core.*
-import sagablind.loader.{JarLoader, SagaStepProvider}
+import sagablind.loader.SagaStepProvider
 import sagablind.pool.PersistentOkvPool
 import sagablind.store.WalStore
 import sagablind.core.{SagaStatus, StepStatus}
@@ -17,7 +17,7 @@ class SagaExecutorSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach
 
   val dbPath = "/tmp/saga-blind-executor-test.db"
   var store:    WalStore            = scala.compiletime.uninitialized
-  var loader:   JarLoader           = scala.compiletime.uninitialized
+  
   var registry: SagaControl = scala.compiletime.uninitialized
   var executor: SagaExecutor        = scala.compiletime.uninitialized
 
@@ -25,9 +25,9 @@ class SagaExecutorSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach
     Files.deleteIfExists(Paths.get(dbPath))
     store    = WalStore(dbPath)
     store.init()
-    loader   = JarLoader()
+
     registry = SagaControl()
-    executor = SagaExecutor(store, loader, registry)
+    executor = SagaExecutor(store, registry)
 
   override def afterEach(): Unit =
     store.close()

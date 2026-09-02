@@ -38,7 +38,7 @@ class SagaControl:
   def withdraw(sagaName: String): Unit =
     sagas.remove(sagaName)
 
-  // ── get & status  ──────────────────────────────────────────────────────────
+  // ── get  ──────────────────────────────────────────────────────────
   def get(name: String): Either[String, Saga] =
     sagas.get(name).toRight(s"No saga registered under name '$name'")
                                          
@@ -59,7 +59,7 @@ class SagaControl:
         sagas(name) = e.copy(status = DefinitionStatus.Stopped)
         Right(())
 
-  /** Eject — only allowed when Stopped and no instances remain.
+  /** Remove — only allowed when Stopped and no instances remain.
    *  instanceCount is provided by SagaRuntime which tracks running instances. */
   def remove(name: String, instanceCount: Int): Either[String, Unit] =
     sagas.get(name) match

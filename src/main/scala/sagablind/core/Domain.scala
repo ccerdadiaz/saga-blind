@@ -90,6 +90,10 @@ case class SagaDefinition(
   steps:   List[SagaElement],
 )
 
+// SagaElement — unit of execution in a saga definition.
+// A saga is a sequence of elements; each element is either
+// a single step or a group of steps that execute concurrently.
+// The step+compensation contract lives in StepDescriptor.
 enum SagaElement:
   case Single(descriptor: StepDescriptor)
   case Parallel(steps: List[StepDescriptor])

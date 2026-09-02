@@ -12,6 +12,12 @@ import scala.concurrent.duration.*
 // ── SagaRuntime ──────────────────────────────────────────────────────────────
 // The engine. Wires together all layers.
 // Engine and ZombieHunter start and stop together as a pair.
+//
+// Classloader lifecycle: jarLoader.release is called here after execute —
+// SagaExecutor has no knowledge of classloader management.
+//
+// TODO good-first-issue idiomatic-scala: replace jarLoader.release with
+// scala.util.Using — URLClassLoader implements AutoCloseable
 
 class SagaRuntime(
   dbPath:      String,
@@ -22,11 +28,10 @@ class SagaRuntime(
   private val store       = WalStore(dbPath)
   private val jarLoader   = JarLoader()
   private val sagaControl = SagaControl()
-  private val executor    = SagaExecutor(store, jarLoader, sagaControl)
+  private val executor    = SagaExecutor(store, sagaControl)
   private val watcher     = FileWatcher(Paths.get(watchDir), sagaControl)
   private val zh          = ZombieHunter(store, jarLoader, stepTtl, zhScanEvery)
 
-  // tracks running instance count per definition name
   private val inFlight: scala.collection.concurrent.TrieMap[String, Int] =
     scala.collection.concurrent.TrieMap.empty
 
@@ -42,21 +47,26 @@ class SagaRuntime(
     for
       saga      <- sagaControl.get(sagaName)
       _         <- Either.cond(
-                   saga.status == DefinitionStatus.Playing,
-                   (),
-                   s"Saga '$sagaName' is ${saga.status} — not accepting new instances"
-                 )
+                     saga.status == DefinitionStatus.Playing,
+                     (),
+                     s"Saga '$sagaName' is ${saga.status} — not accepting new instances"
+                   )
       sagaId     = SagaId.generate()
       providers <- jarLoader.load(sagaId, saga.definition.jarPath, saga.definition.steps.flatMap:
-                   case SagaElement.Single(d)    => List(d)
-                   case SagaElement.Parallel(ds) => ds
-                 )
+                     case SagaElement.Single(d)    => List(d)
+                     case SagaElement.Parallel(ds) => ds
+                   )
       pool       = PersistentOkvPool(sagaId, store)
       _         <- pool.init(params)
       _          = inFlight.updateWith(sagaName)(n => Some(n.getOrElse(0) + 1))
-      _         <- executor.execute(sagaId, saga.definition, providers, pool)
-      _          = inFlight.updateWith(sagaName)(n => Some(math.max(0, n.getOrElse(1) - 1)))
-    yield sagaId
+    yield
+      // execute outside the for — release and inFlight update happen always,
+      // regardless of whether execute succeeds or fails
+      val result = executor.execute(sagaId, saga.definition, providers, pool)
+      jarLoader.release(sagaId)
+      inFlight.updateWith(sagaName)(n => Some(math.max(0, n.getOrElse(1) - 1)))
+      result.map(_ => sagaId)
+  .flatten
 
   // ── Control ───────────────────────────────────────────────────────────────
 
@@ -99,6 +109,6 @@ class SagaRuntime(
 
   // ── Query ─────────────────────────────────────────────────────────────────
 
-  def list(): List[SagaRow]              = store.allSagas()
-  def available(): List[String]          = sagaControl.available
+  def list(): List[SagaRow]     = store.allSagas()
+  def available(): List[String] = sagaControl.available
   def definitions(): List[Saga] = sagaControl.all

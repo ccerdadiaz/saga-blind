@@ -1,7 +1,7 @@
 package sagablind.core
 
 import sagablind.control.SagaControl
-import sagablind.loader.{JarLoader, SagaStepProvider}
+import sagablind.loader.SagaStepProvider
 import sagablind.pool.PersistentOkvPool
 import sagablind.store.WalStore
 
@@ -15,8 +15,10 @@ import scala.concurrent.duration.*
 //
 // Parameter binding: the engine extracts args from the OKV using ParamExtractor
 // before calling execute/compensate. The jar knows nothing about the OKV.
+//
+// Classloader lifecycle (load/release) is SagaRuntime's responsibility.
 
-class SagaExecutor(store: WalStore, jarLoader: JarLoader, registry: SagaControl):
+class SagaExecutor(store: WalStore, registry: SagaControl):
 
   def execute(
     sagaId:     SagaId,
@@ -26,13 +28,15 @@ class SagaExecutor(store: WalStore, jarLoader: JarLoader, registry: SagaControl)
   ): Either[String, Unit] =
 
     // validate semantic correctness before touching the WAL
+    // TODO good-first-issue: move validation to SagaControl.publish — once per definition
     SagaValidator.validate(definition) match
       case Left(err) => return Left(s"Saga '${definition.id}' failed validation:\n$err")
       case Right(()) => ()
 
     store.insertSaga(sagaId, definition.id, SagaStatus.Running)
 
-    // track executed steps for LIFO compensation
+    // TODO good-first-issue idiomatic-scala: replace mutable ListBuffer with
+    // runSteps returning Either[String, List[StepDescriptor]]
     val executed = scala.collection.mutable.ListBuffer.empty[StepDescriptor]
 
     val result = runSteps(sagaId, definition, providers, pool, executed)
@@ -40,12 +44,10 @@ class SagaExecutor(store: WalStore, jarLoader: JarLoader, registry: SagaControl)
     result match
       case Right(()) =>
         store.updateSagaStatus(sagaId, SagaStatus.Done)
-        jarLoader.release(sagaId)
         Right(())
       case Left(err) =>
         compensateLIFO(sagaId, executed.toList.reverse, providers, pool)
         store.updateSagaStatus(sagaId, SagaStatus.Compensated)
-        jarLoader.release(sagaId)
         Left(err)
 
   private def runSteps(
@@ -70,16 +72,16 @@ class SagaExecutor(store: WalStore, jarLoader: JarLoader, registry: SagaControl)
             executeElement(sagaId, element, providers, pool, executed)
 
   private def executeElement(
-    sagaId:   SagaId,
-    element:  SagaElement,
+    sagaId:    SagaId,
+    element:   SagaElement,
     providers: Map[String, SagaStepProvider],
-    pool:     PersistentOkvPool,
-    executed: scala.collection.mutable.ListBuffer[StepDescriptor],
+    pool:      PersistentOkvPool,
+    executed:  scala.collection.mutable.ListBuffer[StepDescriptor],
   ): Either[String, Unit] =
     element match
-      case SagaElement.Single(descriptor)  =>
+      case SagaElement.Single(descriptor) =>
         executeStep(sagaId, descriptor, providers, pool, executed)
-      case SagaElement.Parallel(steps)     =>
+      case SagaElement.Parallel(steps) =>
         executeParallel(sagaId, steps, providers, pool, executed)
 
   private def executeStep(
@@ -94,18 +96,15 @@ class SagaExecutor(store: WalStore, jarLoader: JarLoader, registry: SagaControl)
         Left(s"No provider found for step '${descriptor.id}'")
       case Some(provider) =>
         store.insertStep(sagaId, descriptor.id, descriptor.kind, StepStatus.Registered)
-
-        // extract args from OKV using input mappings
         ParamExtractor.resolve(descriptor.inputMappings, pool.memory) match
           case Left(err) =>
             store.updateStepStatus(sagaId, descriptor.id, StepStatus.Failed)
             descriptor.kind match
-              case StepKind.Mandatory  => Left(s"Step '${descriptor.id}' param extraction failed: $err")
-              case _                   => Right(())
+              case StepKind.Mandatory => Left(s"Step '${descriptor.id}' param extraction failed: $err")
+              case _                  => Right(())
           case Right(args) =>
             provider.execute(args) match
               case Right(outputs) =>
-                // deposit outputs into OKV under this step's ownership
                 pool.depositDelta(descriptor.id, outputs) match
                   case Left(err) =>
                     store.updateStepStatus(sagaId, descriptor.id, StepStatus.Failed)
@@ -138,11 +137,10 @@ class SagaExecutor(store: WalStore, jarLoader: JarLoader, registry: SagaControl)
 
   private def compensateLIFO(
     sagaId:    SagaId,
-    steps:     List[StepDescriptor],  // already reversed
+    steps:     List[StepDescriptor],
     providers: Map[String, SagaStepProvider],
     pool:      PersistentOkvPool,
   ): Unit =
-    
     steps.foreach: descriptor =>
       providers.get(descriptor.id).foreach: provider =>
         ParamExtractor.resolve(descriptor.compensateMappings, pool.memory) match
