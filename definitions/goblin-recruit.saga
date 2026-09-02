@@ -1,0 +1,63 @@
+# goblin-recruit — arms and enlists a goblin
+# Demonstrates: sequential steps, parallel block, param mapping, LIFO compensation
+# The helmet (getHat) goes last — most expensive to compensate
+
+saga: goblin-recruit
+jar: ./libs/goblin-services.jar
+
+steps:
+  - id: measurements
+    kind: mandatory
+    class: sagablind.goblin.MeasurementsService
+    inputs:
+      - param: goblinId
+        from: __init__/goblinId
+
+  - parallel:
+    - id: smithy
+      kind: mandatory
+      class: sagablind.goblin.SmithyService
+      inputs:
+        - param: armLength
+          from: measurements/armLength
+      compensate:
+        - param: weaponId
+          from: smithy/weaponId
+
+    - id: boots
+      kind: mandatory
+      class: sagablind.goblin.BootsService
+      inputs:
+        - param: footSize
+          from: measurements/footSize
+      compensate:
+        - param: bootId
+          from: boots/bootId
+
+  - id: getHat
+    kind: mandatory
+    class: sagablind.goblin.HatService
+    inputs:
+      - param: goblinId
+        from: __init__/goblinId
+      - param: head
+        from: measurements/head
+    compensate:
+      - param: hatSerialNumber
+        from: getHat/hatSerialNumber
+
+  - id: enlist
+    kind: mandatory
+    class: sagablind.goblin.EnlistService
+    inputs:
+      - param: goblinId
+        from: __init__/goblinId
+      - param: weaponType
+        from: smithy/weaponType
+      - param: bootSize
+        from: boots/bootSize
+      - param: hatSerialNumber
+        from: getHat/hatSerialNumber
+    compensate:
+      - param: enlistmentId
+        from: enlist/enlistmentId
