@@ -51,33 +51,11 @@ class SagaControlSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
     control.publish(sagaFile)
     control.statusOf("goblin-campaign") shouldBe Some(DefinitionStatus.Playing)
 
-  it should "get returns saga with status" in:
+  it should "get returns saga with its status" in:
     control.publish(sagaFile)
-    control.pause("goblin-campaign")
+    control.stop("goblin-campaign")
     val saga = control.get("goblin-campaign").toOption.get
-    saga.status shouldBe DefinitionStatus.Paused
-
-  // ── pause / continue ──────────────────────────────────────────────────────
-
-  it should "pause a Playing saga" in:
-    control.publish(sagaFile)
-    control.pause("goblin-campaign") shouldBe Right(())
-    control.statusOf("goblin-campaign") shouldBe Some(DefinitionStatus.Paused)
-
-  it should "continue a Paused saga" in:
-    control.publish(sagaFile)
-    control.pause("goblin-campaign")
-    control.continue("goblin-campaign") shouldBe Right(())
-    control.statusOf("goblin-campaign") shouldBe Some(DefinitionStatus.Playing)
-
-  it should "not pause an already Paused saga" in:
-    control.publish(sagaFile)
-    control.pause("goblin-campaign")
-    control.pause("goblin-campaign") shouldBe a[Left[?, ?]]
-
-  it should "not continue a Playing saga" in:
-    control.publish(sagaFile)
-    control.continue("goblin-campaign") shouldBe a[Left[?, ?]]
+    saga.status shouldBe DefinitionStatus.Stopped
 
   // ── stop ──────────────────────────────────────────────────────────────────
 
@@ -86,17 +64,13 @@ class SagaControlSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
     control.stop("goblin-campaign") shouldBe Right(())
     control.statusOf("goblin-campaign") shouldBe Some(DefinitionStatus.Stopped)
 
-  it should "stop a Paused saga" in:
-    control.publish(sagaFile)
-    control.pause("goblin-campaign")
-    control.stop("goblin-campaign") shouldBe Right(())
-    control.statusOf("goblin-campaign") shouldBe Some(DefinitionStatus.Stopped)
-
-  it should "not stop an already Removed saga" in:
+  it should "not stop an already Stopped saga" in:
     control.publish(sagaFile)
     control.stop("goblin-campaign")
-    control.remove("goblin-campaign", instanceCount = 0)
     control.stop("goblin-campaign") shouldBe a[Left[?, ?]]
+
+  it should "not stop an unknown saga" in:
+    control.stop("ghost") shouldBe a[Left[?, ?]]
 
   // ── remove ────────────────────────────────────────────────────────────────
 
@@ -106,7 +80,7 @@ class SagaControlSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
     control.remove("goblin-campaign", instanceCount = 0).shouldBe(Right(()))
     control.size shouldBe 0
 
-  it should "not remove a saga that is not Stopped" in:
+  it should "not remove a Playing saga" in:
     control.publish(sagaFile)
     control.remove("goblin-campaign", instanceCount = 0).shouldBe(a[Left[?, ?]])
 
@@ -120,18 +94,18 @@ class SagaControlSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
   it should "list only Playing sagas as available" in:
     control.publish(sagaFile)
     control.available should contain("goblin-campaign")
-    control.pause("goblin-campaign")
+    control.stop("goblin-campaign")
     control.available shouldNot contain("goblin-campaign")
 
   it should "list all sagas regardless of status" in:
     control.publish(sagaFile)
-    control.pause("goblin-campaign")
+    control.stop("goblin-campaign")
     control.all.size shouldBe 1
-    control.all.head.status shouldBe DefinitionStatus.Paused
+    control.all.head.status shouldBe DefinitionStatus.Stopped
 
   // ── stopAll ───────────────────────────────────────────────────────────────
 
-  it should "stop all Playing and Paused definitions on stopAll" in:
+  it should "stop all Playing definitions on stopAll" in:
     val sagaFile2 = Files.createTempFile("test-saga-2", ".saga")
     Files.writeString(sagaFile2, """
       |saga: goblin-patrol
@@ -144,8 +118,6 @@ class SagaControlSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
 
     control.publish(sagaFile)
     control.publish(sagaFile2)
-    control.pause("goblin-campaign")
-
     control.stopAll()
 
     control.statusOf("goblin-campaign") shouldBe Some(DefinitionStatus.Stopped)

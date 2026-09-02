@@ -9,14 +9,8 @@ import scala.concurrent.{Future, Await, ExecutionContext}
 import scala.concurrent.duration.*
 
 // ── SagaExecutor ─────────────────────────────────────────────────────────────
-// Executes a single saga instance.
-// Checks definition status between steps — pauses or stops as instructed.
-// WAL-before-action on every state transition.
-//
-// Parameter binding: the engine extracts args from the OKV using ParamExtractor
-// before calling execute/compensate. The jar knows nothing about the OKV.
-//
-// Classloader lifecycle (load/release) is SagaRuntime's responsibility.
+// Factory — creates a SagaExecution per saga instance.
+// Stateless: all execution state lives in SagaExecution.
 
 class SagaExecutor(store: WalStore, registry: SagaControl):
 
@@ -26,71 +20,63 @@ class SagaExecutor(store: WalStore, registry: SagaControl):
     providers:  Map[String, SagaStepProvider],
     pool:       PersistentOkvPool,
   ): Either[String, Unit] =
+    SagaExecution(sagaId, definition, providers, pool, store, registry).run()
 
-    // validate semantic correctness before touching the WAL
-    // TODO good-first-issue: move validation to SagaControl.publish — once per definition
+// ── SagaExecution ─────────────────────────────────────────────────────────────
+// One instance per saga execution.
+// Owns the executed steps list — no mutable state travels between methods.
+//
+// WAL-before-action on every state transition.
+// Parameter binding via ParamExtractor — the jar knows nothing about the OKV.
+//
+// TODO good-first-issue: move SagaValidator.validate to SagaControl.publish
+// TODO good-first-issue idiomatic-scala: replace mutable executed with
+//   runSteps returning Either[String, List[StepDescriptor]]
+
+private class SagaExecution(
+  sagaId:     SagaId,
+  definition: SagaDefinition,
+  providers:  Map[String, SagaStepProvider],
+  pool:       PersistentOkvPool,
+  store:      WalStore,
+  registry:   SagaControl,
+):
+  private val executed = scala.collection.mutable.ListBuffer.empty[StepDescriptor]
+
+  def run(): Either[String, Unit] =
     SagaValidator.validate(definition) match
       case Left(err) => return Left(s"Saga '${definition.id}' failed validation:\n$err")
       case Right(()) => ()
 
     store.insertSaga(sagaId, definition.id, SagaStatus.Running)
 
-    // TODO good-first-issue idiomatic-scala: replace mutable ListBuffer with
-    // runSteps returning Either[String, List[StepDescriptor]]
-    val executed = scala.collection.mutable.ListBuffer.empty[StepDescriptor]
-
-    val result = runSteps(sagaId, definition, providers, pool, executed)
+    val result = runSteps()
 
     result match
       case Right(()) =>
         store.updateSagaStatus(sagaId, SagaStatus.Done)
         Right(())
       case Left(err) =>
-        compensateLIFO(sagaId, executed.toList.reverse, providers, pool)
+        compensateLIFO()
         store.updateSagaStatus(sagaId, SagaStatus.Compensated)
         Left(err)
 
-  private def runSteps(
-    sagaId:     SagaId,
-    definition: SagaDefinition,
-    providers:  Map[String, SagaStepProvider],
-    pool:       PersistentOkvPool,
-    executed:   scala.collection.mutable.ListBuffer[StepDescriptor],
-  ): Either[String, Unit] =
+  private def runSteps(): Either[String, Unit] =
     definition.steps.foldLeft(Right(()): Either[String, Unit]):
       case (Left(err), _) => Left(err)
       case (Right(()), element) =>
         registry.statusOf(definition.id) match
-          case Some(DefinitionStatus.Paused) =>
-            store.updateSagaStatus(sagaId, SagaStatus.PausedBetweenSteps)
-            waitForContinue(definition.id)
-            store.updateSagaStatus(sagaId, SagaStatus.Running)
-            executeElement(sagaId, element, providers, pool, executed)
           case Some(DefinitionStatus.Stopped) =>
             Left(s"Saga '${definition.id}' stopped by operator")
           case _ =>
-            executeElement(sagaId, element, providers, pool, executed)
+            executeElement(element)
 
-  private def executeElement(
-    sagaId:    SagaId,
-    element:   SagaElement,
-    providers: Map[String, SagaStepProvider],
-    pool:      PersistentOkvPool,
-    executed:  scala.collection.mutable.ListBuffer[StepDescriptor],
-  ): Either[String, Unit] =
+  private def executeElement(element: SagaElement): Either[String, Unit] =
     element match
-      case SagaElement.Single(descriptor) =>
-        executeStep(sagaId, descriptor, providers, pool, executed)
-      case SagaElement.Parallel(steps) =>
-        executeParallel(sagaId, steps, providers, pool, executed)
+      case SagaElement.Single(descriptor) => executeStep(descriptor)
+      case SagaElement.Parallel(steps)    => executeParallel(steps)
 
-  private def executeStep(
-    sagaId:     SagaId,
-    descriptor: StepDescriptor,
-    providers:  Map[String, SagaStepProvider],
-    pool:       PersistentOkvPool,
-    executed:   scala.collection.mutable.ListBuffer[StepDescriptor],
-  ): Either[String, Unit] =
+  private def executeStep(descriptor: StepDescriptor): Either[String, Unit] =
     providers.get(descriptor.id) match
       case None =>
         Left(s"No provider found for step '${descriptor.id}'")
@@ -120,38 +106,20 @@ class SagaExecutor(store: WalStore, registry: SagaControl):
                   case StepKind.Optional   => Right(())
                   case StepKind.BestEffort => Right(())
 
-  private def executeParallel(
-    sagaId:    SagaId,
-    steps:     List[StepDescriptor],
-    providers: Map[String, SagaStepProvider],
-    pool:      PersistentOkvPool,
-    executed:  scala.collection.mutable.ListBuffer[StepDescriptor],
-  ): Either[String, Unit] =
+  private def executeParallel(steps: List[StepDescriptor]): Either[String, Unit] =
     given ExecutionContext = ExecutionContext.global
-    val futures = steps.map: descriptor =>
-      Future(executeStep(sagaId, descriptor, providers, pool, executed))
+    val futures = steps.map(descriptor => Future(executeStep(descriptor)))
     val results = Await.result(Future.sequence(futures), 30.seconds)
     results.collectFirst { case Left(err) => Left(err) }.getOrElse(Right(()))
 
-  // ── Compensation LIFO ─────────────────────────────────────────────────────
-
-  private def compensateLIFO(
-    sagaId:    SagaId,
-    steps:     List[StepDescriptor],
-    providers: Map[String, SagaStepProvider],
-    pool:      PersistentOkvPool,
-  ): Unit =
-    steps.foreach: descriptor =>
+  private def compensateLIFO(): Unit =
+    executed.toList.reverse.foreach: descriptor =>
       providers.get(descriptor.id).foreach: provider =>
         ParamExtractor.resolve(descriptor.compensateMappings, pool.memory) match
           case Left(err) =>
-            println(s"[SagaExecutor] compensation param extraction failed for '${descriptor.id}': $err")
+            println(s"[SagaExecution] compensation param extraction failed for '${descriptor.id}': $err")
           case Right(args) =>
             provider.compensate(args) match
               case Right(()) => ()
               case Left(err) =>
-                println(s"[SagaExecutor] compensation failed for '${descriptor.id}': ${err.getMessage}")
-
-  private def waitForContinue(sagaName: String): Unit =
-    while registry.statusOf(sagaName).contains(DefinitionStatus.Paused) do
-      Thread.sleep(500)
+                println(s"[SagaExecution] compensation failed for '${descriptor.id}': ${err.getMessage}")

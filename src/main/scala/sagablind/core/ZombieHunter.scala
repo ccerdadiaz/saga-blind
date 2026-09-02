@@ -19,11 +19,9 @@ import scala.concurrent.duration.*
 // Instances left in Unknown state are picked up on next engine start.
 //
 // ZH never touches:
-//   PausedBetweenSteps — operator decision
-//   Stopped            — operator decision
-//   Done               — terminal correct
-//   Compensated        — terminal correct
-//   Failed             — engine already initiated compensation
+//   Done        — terminal correct
+//   Compensated — terminal correct
+//   Failed      — engine already initiated compensation
 //
 // ZH acts on:
 //   Running with Unknown steps — step exceeded TTL
@@ -71,7 +69,6 @@ class ZombieHunter(
       .foreach: saga =>
         val steps = store.stepsFor(saga.sagaId)
 
-        // mark steps that exceeded TTL as Unknown
         steps
           .filter(_.status == StepStatus.Registered)
           .filter(s => exceededTtl(s.startedAt, now))
@@ -79,7 +76,6 @@ class ZombieHunter(
             println(s"[ZombieHunter] '${step.stepId}' in '${saga.sagaId.value}' exceeded TTL — Unknown")
             store.updateStepStatus(saga.sagaId, step.stepId, StepStatus.Unknown)
 
-        // handle Unknown steps
         val unknownSteps = store.stepsFor(saga.sagaId).filter(_.status == StepStatus.Unknown)
         if unknownSteps.nonEmpty then
           handleUnknown(saga, unknownSteps)
@@ -95,14 +91,12 @@ class ZombieHunter(
   private def handleUnknown(saga: SagaRow, unknownSteps: List[StepRow]): Unit =
     println(s"[ZombieHunter] recovering '${saga.sagaId.value}' — ${unknownSteps.size} Unknown step(s)")
 
-    // reconstruct definition from WAL
     val definition = SagaDslParser.parse(saga.definition) match
       case Left(err) =>
         onAlert(s"Cannot parse definition for '${saga.sagaId.value}': $err")
         return
       case Right(d) => d
 
-    // reconstruct pool from WAL
     val pool = PersistentOkvPool(saga.sagaId, store)
     pool.restore() match
       case Left(err) =>
@@ -110,7 +104,6 @@ class ZombieHunter(
         return
       case Right(()) => ()
 
-    // load jar and instantiate providers
     val allDescriptors = definition.steps.flatMap:
       case SagaElement.Single(d)    => List(d)
       case SagaElement.Parallel(ds) => ds
@@ -121,7 +114,6 @@ class ZombieHunter(
         return
       case Right(p) => p
 
-    // attempt forward retry for each Unknown step
     val recovered = unknownSteps.forall: step =>
       val descriptor = allDescriptors.find(_.id == step.stepId)
       descriptor.flatMap(d => providers.get(d.id)) match

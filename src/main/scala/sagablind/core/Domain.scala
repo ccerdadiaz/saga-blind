@@ -20,11 +20,14 @@ enum StepStatus:
 
 /** Saga instance lifecycle states */
 enum SagaStatus:
-  case Running, Done, Failed, Stopped, PausedBetweenSteps, Compensated
+  case Running, Done, Failed, Stopped, Compensated
 
-/** Definition lifecycle */
+/** Definition lifecycle.
+ *  Playing — accepts new instances
+ *  Stopped — no new instances; in-flight instances run to completion
+ *  Removed — definition no longer exists */
 enum DefinitionStatus:
-  case Playing, Paused, Stopped, Removed
+  case Playing, Stopped, Removed
 
 // ── Parameter mapping ────────────────────────────────────────────────────────
 // Describes how to extract a value from the OKV pool and bind it to a parameter.
@@ -40,34 +43,30 @@ enum DefinitionStatus:
 //   A/candidateCollection[1]        → second element of A's candidateCollection
 
 case class ParamMapping(
-  param: String,   // name of the target parameter
-  from:  String,   // "owner/key" or "owner/key.jsonPath" or "owner/key[n]"
+  param: String,
+  from:  String,
 )
 
 /** Parsed form of a 'from' expression */
 case class OkvRef(
-  owner:    String,          // step id or __init__
-  key:      String,          // OKV key
-  jsonPath: Option[String],  // optional JSONPath within the value
+  owner:    String,
+  key:      String,
+  jsonPath: Option[String],
 )
 
 object OkvRef:
-  /** Parse "owner/key" or "owner/key.path" or "owner/key[n]" */
   def parse(from: String): Either[String, OkvRef] =
     val slashIdx = from.indexOf('/')
     if slashIdx < 0 then
       Left(s"Invalid 'from' expression '$from' — expected owner/key[.path]")
     else
-      val owner = from.substring(0, slashIdx).trim
-      val rest  = from.substring(slashIdx + 1).trim
-      // split key from optional jsonPath at first '.' or '['
+      val owner     = from.substring(0, slashIdx).trim
+      val rest      = from.substring(slashIdx + 1).trim
       val pathStart = rest.indexWhere(c => c == '.' || c == '[')
       if pathStart < 0 then
         Right(OkvRef(owner, rest, None))
       else
-        val key      = rest.substring(0, pathStart)
-        val jsonPath = rest.substring(pathStart)
-        Right(OkvRef(owner, key, Some(jsonPath)))
+        Right(OkvRef(owner, rest.substring(0, pathStart), Some(rest.substring(pathStart))))
 
 // ── Step descriptor ───────────────────────────────────────────────────────────
 // Describes a step as declared in the DSL.

@@ -7,7 +7,6 @@ import org.scalatest.BeforeAndAfterEach
 import sagablind.core.*
 import sagablind.loader.JarLoader
 import sagablind.store.WalStore
-import sagablind.core.{SagaStatus, StepStatus}
 
 import java.nio.file.{Files, Paths}
 import scala.concurrent.duration.*
@@ -89,7 +88,7 @@ class ZombieHunterSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach
 
   it should "not touch sagas not in Running state" in:
     val sagaId = SagaId("zh-4")
-    store.insertSaga(sagaId, dslContent, SagaStatus.PausedBetweenSteps)
+    store.insertSaga(sagaId, dslContent, SagaStatus.Stopped)
     store.insertStepAt(sagaId, "measurements", StepKind.Mandatory, StepStatus.Registered, pastTime)
 
     val zh = makeZH()
@@ -113,4 +112,3 @@ class ZombieHunterSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach
     zh.stop()
 
     alertReceived shouldBe true
-

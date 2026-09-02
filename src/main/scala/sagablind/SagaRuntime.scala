@@ -70,8 +70,6 @@ class SagaRuntime(
 
   // ── Control ───────────────────────────────────────────────────────────────
 
-  def pause(name: String): Either[String, Unit]    = sagaControl.pause(name)
-  def continue(name: String): Either[String, Unit] = sagaControl.continue(name)
   def stop(name: String): Either[String, Unit]     = sagaControl.stop(name)
 
   def remove(name: String): Either[String, Unit] =

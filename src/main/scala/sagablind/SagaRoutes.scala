@@ -6,9 +6,13 @@ import ujson.*
 // HTTP routes — thin layer over SagaRuntime. No business logic here.
 //
 // Routes:
-//   POST /sagas/launch    — launch a new saga instance
-//   GET  /sagas           — list all saga instances
-//   GET  /sagas/available — list registered saga definitions
+//   POST   /sagas/launch              — launch a new saga instance
+//   GET    /sagas                     — list all saga instances
+//   GET    /sagas/available           — list Playing saga definitions
+//   GET    /sagas/definitions         — list all definitions with status
+//   POST   /sagas/definitions/:name/stop  — stop definition
+//   DELETE /sagas/definitions/:name   — remove definition
+//   POST   /engine/shutdown           — soft shutdown
 
 class SagaRoutes(runtime: SagaRuntime) extends cask.Routes:
 
@@ -53,35 +57,6 @@ class SagaRoutes(runtime: SagaRuntime) extends cask.Routes:
       headers    = Seq("Content-Type" -> "application/json"),
     )
 
-  initialize()
-
-
-// ── Control routes ────────────────────────────────────────────────────────────
-
-  @cask.post("/sagas/definitions/:name/pause")
-  def pause(name: String): cask.Response[String] =
-    runtime.pause(name) match
-      case Right(()) => ok(s"Saga '$name' paused")
-      case Left(err) => bad(err)
-
-  @cask.post("/sagas/definitions/:name/continue")
-  def continue(name: String): cask.Response[String] =
-    runtime.continue(name) match
-      case Right(()) => ok(s"Saga '$name' resumed")
-      case Left(err) => bad(err)
-
-  @cask.post("/sagas/definitions/:name/stop")
-  def stop(name: String): cask.Response[String] =
-    runtime.stop(name) match
-      case Right(()) => ok(s"Saga '$name' stopped — in-flight instances will be compensated")
-      case Left(err) => bad(err)
-
-  @cask.delete("/sagas/definitions/:name")
-  def remove(name: String): cask.Response[String] =
-    runtime.remove(name) match
-      case Right(()) => ok(s"Saga '$name' removed")
-      case Left(err) => bad(err)
-
   @cask.get("/sagas/definitions")
   def definitions(): cask.Response[String] =
     val entries = runtime.definitions().map: entry =>
@@ -93,6 +68,29 @@ class SagaRoutes(runtime: SagaRuntime) extends cask.Routes:
     cask.Response(
       ujson.Arr(entries*).toString,
       statusCode = 200,
+      headers    = Seq("Content-Type" -> "application/json"),
+    )
+
+  @cask.post("/sagas/definitions/:name/stop")
+  def stop(name: String): cask.Response[String] =
+    runtime.stop(name) match
+      case Right(()) => ok(s"Saga '$name' stopped — in-flight instances will complete normally")
+      case Left(err) => bad(err)
+
+  @cask.delete("/sagas/definitions/:name")
+  def remove(name: String): cask.Response[String] =
+    runtime.remove(name) match
+      case Right(()) => ok(s"Saga '$name' removed")
+      case Left(err) => bad(err)
+
+  @cask.post("/engine/shutdown")
+  def shutdown(): cask.Response[String] =
+    val thread = Thread(() => runtime.shutdown(), "saga-blind-shutdown")
+    thread.setDaemon(false)
+    thread.start()
+    cask.Response(
+      ujson.Obj("message" -> "shutdown initiated — waiting for in-flight instances").toString,
+      statusCode = 202,
       headers    = Seq("Content-Type" -> "application/json"),
     )
 
@@ -110,14 +108,4 @@ class SagaRoutes(runtime: SagaRuntime) extends cask.Routes:
       headers    = Seq("Content-Type" -> "application/json"),
     )
 
-  @cask.post("/engine/shutdown")
-  def shutdown(): cask.Response[String] =
-    // Run shutdown in a separate thread — response must return before System.exit
-    val thread = Thread(() => runtime.shutdown(), "saga-blind-shutdown")
-    thread.setDaemon(false)
-    thread.start()
-    cask.Response(
-      ujson.Obj("message" -> "shutdown initiated — waiting for in-flight instances").toString,
-      statusCode = 202,
-      headers    = Seq("Content-Type" -> "application/json"),
-    )
+  initialize()
