@@ -1,6 +1,7 @@
 package sagablind.control
 
 import sagablind.core.SagaDefinition
+import sagablind.{SagaLogger, BoundLogger}
 
 import java.nio.file.*
 import java.nio.file.StandardWatchEventKinds.*
@@ -8,19 +9,23 @@ import scala.util.Try
 
 // ── FileWatcher ──────────────────────────────────────────────────────────────
 // Watches a directory for .saga files.
-// On CREATED → publishes to SagaServiceRegistry
-// On DELETED → withdraws from SagaServiceRegistry
-// On MODIFIED → not supported by design 
+// On CREATED → publishes to SagaControl
+// On DELETED → withdraws from SagaControl
+//
+// ENTRY_MODIFY is intentionally not handled — the engine does not support
+// versioning. To update a definition: stop, wait, delete, drop new version.
 //
 // Runs in a dedicated daemon thread — does not block the HTTP server.
+// WatchService.take() blocks without consuming CPU — no polling.
 
 class FileWatcher(
   watchDir:   Path,
   registry:   SagaControl,
+  logger:     SagaLogger = SagaLogger.noOp,
   onPublish:  SagaDefinition => Unit = _ => (),
   onWithdraw: String => Unit         = _ => (),
-  onError:    String => Unit         = msg => System.err.println(s"[FileWatcher] $msg"),
 ):
+  private val log: BoundLogger      = logger.forComponent("fw")
   private val watchService: WatchService = FileSystems.getDefault.newWatchService()
   private var running = false
 
@@ -34,14 +39,17 @@ class FileWatcher(
       .filter(_.toString.endsWith(".saga"))
       .forEach: path =>
         registry.publish(path) match
-          case Right(definition) => onPublish(definition)
-          case Left(error)       => onError(s"Failed to publish '$path': $error")
+          case Right(definition) =>
+            log.info(s"published '${definition.id}'")
+            onPublish(definition)
+          case Left(error) =>
+            log.error(s"Failed to publish '$path': $error")
 
     running = true
     val thread = Thread(() => loop(), "saga-blind-filewatcher")
     thread.setDaemon(true)
     thread.start()
-    println(s"[FileWatcher] watching ${watchDir.toAbsolutePath}")
+    log.info(s"watching ${watchDir.toAbsolutePath}")
 
   def stop(): Unit =
     running = false
@@ -60,13 +68,13 @@ class FileWatcher(
                 case ENTRY_CREATE =>
                   registry.publish(fullPath) match
                     case Right(definition) =>
-                      println(s"[FileWatcher] published '${definition.id}'")
+                      log.info(s"published '${definition.id}'")
                       onPublish(definition)
                     case Left(error) =>
-                      onError(s"Failed to publish '$fullPath': $error")
+                      log.error(s"Failed to publish '$fullPath': $error")
                 case ENTRY_DELETE =>
                   registry.withdraw(filename.stripSuffix(".saga"))
-                  println(s"[FileWatcher] withdrawn '$filename'")
+                  log.info(s"withdrawn '$filename'")
                   onWithdraw(filename)
                 case _ => ()
         key.reset()

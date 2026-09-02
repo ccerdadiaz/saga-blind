@@ -4,6 +4,7 @@ import sagablind.dsl.SagaDslParser
 import sagablind.loader.{JarLoader, SagaStepProvider}
 import sagablind.pool.PersistentOkvPool
 import sagablind.store.{WalStore, StepRow, SagaRow}
+import sagablind.{SagaLogger, BoundLogger}
 
 import scala.concurrent.duration.*
 
@@ -38,8 +39,9 @@ class ZombieHunter(
   jarLoader: JarLoader,
   stepTtl:   Duration = 30.seconds,
   scanEvery: Duration = 10.seconds,
-  onAlert:   String => Unit = msg => System.err.println(s"[ZombieHunter] ALERT: $msg"),
+  logger:    SagaLogger = SagaLogger.noOp,
 ):
+  private val log = logger.forComponent("zh")
   private var running = false
 
   def start(): Unit =
@@ -47,18 +49,18 @@ class ZombieHunter(
     val thread = Thread(() => loop(), "saga-blind-zombie-hunter")
     thread.setDaemon(true)
     thread.start()
-    println(s"[ZombieHunter] started — ttl=${stepTtl} scan=${scanEvery}")
+    log.info(s"started — ttl=${stepTtl} scan=${scanEvery}")
 
   def stop(): Unit =
     running = false
-    println("[ZombieHunter] stopped")
+    log.info("stopped")
 
   private def loop(): Unit =
     while running do
       Thread.sleep(scanEvery.toMillis)
       try scan()
       catch case e: Exception =>
-        println(s"[ZombieHunter] scan error: ${e.getMessage}")
+        log.error(s"scan error: ${e.getMessage}")
 
   // ── Scan ──────────────────────────────────────────────────────────────────
 
@@ -73,7 +75,7 @@ class ZombieHunter(
           .filter(_.status == StepStatus.Registered)
           .filter(s => exceededTtl(s.startedAt, now))
           .foreach: step =>
-            println(s"[ZombieHunter] '${step.stepId}' in '${saga.sagaId.value}' exceeded TTL — Unknown")
+            log.warn(s"'${step.stepId}' in '${saga.sagaId.value}' exceeded TTL — marking Unknown")
             store.updateStepStatus(saga.sagaId, step.stepId, StepStatus.Unknown)
 
         val unknownSteps = store.stepsFor(saga.sagaId).filter(_.status == StepStatus.Unknown)
@@ -89,18 +91,18 @@ class ZombieHunter(
   // ── Recovery ──────────────────────────────────────────────────────────────
 
   private def handleUnknown(saga: SagaRow, unknownSteps: List[StepRow]): Unit =
-    println(s"[ZombieHunter] recovering '${saga.sagaId.value}' — ${unknownSteps.size} Unknown step(s)")
+    log.info(s"recovering '${saga.sagaId.value}' — ${unknownSteps.size} Unknown step(s)")
 
     val definition = SagaDslParser.parse(saga.definition) match
       case Left(err) =>
-        onAlert(s"Cannot parse definition for '${saga.sagaId.value}': $err")
+        log.error(s"Cannot parse definition for '${saga.sagaId.value}': $err")
         return
       case Right(d) => d
 
     val pool = PersistentOkvPool(saga.sagaId, store)
     pool.restore() match
       case Left(err) =>
-        onAlert(s"Cannot restore pool for '${saga.sagaId.value}': $err")
+        log.error(s"Cannot restore pool for '${saga.sagaId.value}': $err")
         return
       case Right(()) => ()
 
@@ -110,7 +112,7 @@ class ZombieHunter(
 
     val providers = jarLoader.load(saga.sagaId, definition.jarPath, allDescriptors) match
       case Left(err) =>
-        onAlert(s"Cannot load jar for '${saga.sagaId.value}': $err")
+        log.error(s"Cannot load jar for '${saga.sagaId.value}': $err")
         return
       case Right(p) => p
 
@@ -118,24 +120,24 @@ class ZombieHunter(
       val descriptor = allDescriptors.find(_.id == step.stepId)
       descriptor.flatMap(d => providers.get(d.id)) match
         case None =>
-          onAlert(s"No provider for '${step.stepId}' in '${saga.sagaId.value}'")
+          log.error(s"No provider for '${step.stepId}' in '${saga.sagaId.value}'")
           false
         case Some(provider) =>
           descriptor.get.inputMappings match
             case mappings =>
               ParamExtractor.resolve(mappings, pool.memory) match
                 case Left(err) =>
-                  println(s"[ZombieHunter] forward retry param extraction failed: $err — will compensate")
+                  log.warn(s"forward retry param extraction failed for '${step.stepId}': $err — will compensate")
                   false
                 case Right(args) =>
                   provider.execute(args) match
                     case Right(outputs) =>
                       pool.depositDelta(step.stepId, outputs)
                       store.updateStepStatus(saga.sagaId, step.stepId, StepStatus.Done)
-                      println(s"[ZombieHunter] forward retry succeeded for '${step.stepId}'")
+                      log.info(s"forward retry succeeded for '${step.stepId}'")
                       true
                     case Left(err) =>
-                      println(s"[ZombieHunter] forward retry failed for '${step.stepId}': ${err.getMessage} — will compensate")
+                      log.warn(s"forward retry failed for '${step.stepId}': ${err.getMessage} — will compensate")
                       false
 
     if !recovered then
@@ -149,7 +151,7 @@ class ZombieHunter(
     providers:   Map[String, SagaStepProvider],
     pool:        PersistentOkvPool,
   ): Unit =
-    println(s"[ZombieHunter] compensating LIFO for '${saga.sagaId.value}'")
+    log.info(s"compensating LIFO for '${saga.sagaId.value}'")
 
     val doneSteps = store.stepsFor(saga.sagaId)
       .filter(_.status == StepStatus.Done)
@@ -161,13 +163,13 @@ class ZombieHunter(
         providers.get(descriptor.id).foreach: provider =>
           ParamExtractor.resolve(descriptor.compensateMappings, pool.memory) match
             case Left(err) =>
-              onAlert(s"Compensation param extraction failed for '${step.stepId}': $err")
+              log.error(s"Compensation param extraction failed for '${step.stepId}': $err")
             case Right(args) =>
               provider.compensate(args) match
                 case Right(()) =>
-                  println(s"[ZombieHunter] compensated '${step.stepId}'")
+                  log.info(s"compensated '${step.stepId}'")
                 case Left(err) =>
-                  onAlert(s"Compensation failed for '${step.stepId}': ${err.getMessage}")
+                  log.error(s"Compensation failed for '${step.stepId}': ${err.getMessage}")
 
     store.updateSagaStatus(saga.sagaId, SagaStatus.Compensated)
     jarLoader.release(saga.sagaId)

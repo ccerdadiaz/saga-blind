@@ -7,6 +7,7 @@ import org.scalatest.BeforeAndAfterEach
 import sagablind.core.*
 import sagablind.loader.JarLoader
 import sagablind.store.WalStore
+import sagablind.core.{SagaStatus, StepStatus}
 
 import java.nio.file.{Files, Paths}
 import scala.concurrent.duration.*
@@ -38,11 +39,19 @@ class ZombieHunterSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach
       |    class: com.goblin.Measurements
     """.stripMargin
 
-  val pastTime = "2000-01-01T00:00:00Z"  // always exceeds any TTL
+  val pastTime = "2000-01-01T00:00:00Z"
+
+  /** A SagaLogger that captures error messages for test assertions */
+  class CapturingLogger extends SagaLogger:
+    val errors = scala.collection.mutable.ListBuffer.empty[String]
+    def debug(component: String, msg: => String): Unit = ()
+    def info(component: String, msg: => String):  Unit = ()
+    def warn(component: String, msg: => String):  Unit = ()
+    def error(component: String, msg: => String): Unit = errors += msg
 
   def makeZH(ttl: Duration = 100.millis, scan: Duration = 50.millis,
-    alert: String => Unit = _ => ()): ZombieHunter =
-    ZombieHunter(store, loader, stepTtl = ttl, scanEvery = scan, onAlert = alert)
+    logger: SagaLogger = SagaLogger.noOp): ZombieHunter =
+    ZombieHunter(store, loader, stepTtl = ttl, scanEvery = scan, logger = logger)
 
   def insertRunning(sagaId: SagaId): Unit =
     store.insertSaga(sagaId, dslContent, SagaStatus.Running)
@@ -62,7 +71,7 @@ class ZombieHunterSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach
     store.stepsFor(sagaId).head.status shouldBe StepStatus.Unknown
 
   it should "not mark a Registered step as Unknown when TTL not exceeded" in:
-    val sagaId    = SagaId("zh-2")
+    val sagaId     = SagaId("zh-2")
     val recentTime = java.time.Instant.now().toString
     insertRunning(sagaId)
     store.insertStepAt(sagaId, "measurements", StepKind.Mandatory, StepStatus.Registered, recentTime)
@@ -100,15 +109,15 @@ class ZombieHunterSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach
 
   // ── Recovery with unavailable jar ─────────────────────────────────────────
 
-  it should "emit alert when jar cannot be loaded for recovery" in:
-    val sagaId = SagaId("zh-5")
+  it should "log error when jar cannot be loaded for recovery" in:
+    val sagaId  = SagaId("zh-5")
+    val capture = CapturingLogger()
     insertRunning(sagaId)
     store.insertStepAt(sagaId, "measurements", StepKind.Mandatory, StepStatus.Registered, pastTime)
 
-    var alertReceived = false
-    val zh = makeZH(alert = _ => alertReceived = true)
+    val zh = makeZH(logger = capture)
     zh.start()
     Thread.sleep(500)
     zh.stop()
 
-    alertReceived shouldBe true
+    capture.errors.exists(_.contains("Cannot load jar")) shouldBe true

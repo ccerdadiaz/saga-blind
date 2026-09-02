@@ -4,6 +4,7 @@ import sagablind.control.SagaControl
 import sagablind.loader.SagaStepProvider
 import sagablind.pool.PersistentOkvPool
 import sagablind.store.WalStore
+import sagablind.{SagaLogger, BoundLogger}
 
 import scala.concurrent.{Future, Await, ExecutionContext}
 import scala.concurrent.duration.*
@@ -12,7 +13,7 @@ import scala.concurrent.duration.*
 // Factory — creates a SagaExecution per saga instance.
 // Stateless: all execution state lives in SagaExecution.
 
-class SagaExecutor(store: WalStore, registry: SagaControl):
+class SagaExecutor(store: WalStore, registry: SagaControl, logger: SagaLogger = SagaLogger.noOp):
 
   def execute(
     sagaId:     SagaId,
@@ -20,7 +21,7 @@ class SagaExecutor(store: WalStore, registry: SagaControl):
     providers:  Map[String, SagaStepProvider],
     pool:       PersistentOkvPool,
   ): Either[String, Unit] =
-    SagaExecution(sagaId, definition, providers, pool, store, registry).run()
+    SagaExecution(sagaId, definition, providers, pool, store, registry, logger).run()
 
 // ── SagaExecution ─────────────────────────────────────────────────────────────
 // One instance per saga execution.
@@ -40,7 +41,9 @@ private class SagaExecution(
   pool:       PersistentOkvPool,
   store:      WalStore,
   registry:   SagaControl,
+  logger:     SagaLogger,
 ):
+  private val log      = logger.forComponent("engine")
   private val executed = scala.collection.mutable.ListBuffer.empty[StepDescriptor]
 
   def run(): Either[String, Unit] =
@@ -117,9 +120,9 @@ private class SagaExecution(
       providers.get(descriptor.id).foreach: provider =>
         ParamExtractor.resolve(descriptor.compensateMappings, pool.memory) match
           case Left(err) =>
-            println(s"[SagaExecution] compensation param extraction failed for '${descriptor.id}': $err")
+            log.warn(s"compensation param extraction failed for '${descriptor.id}': $err")
           case Right(args) =>
             provider.compensate(args) match
               case Right(()) => ()
               case Left(err) =>
-                println(s"[SagaExecution] compensation failed for '${descriptor.id}': ${err.getMessage}")
+                log.warn(s"compensation failed for '${descriptor.id}': ${err.getMessage}")

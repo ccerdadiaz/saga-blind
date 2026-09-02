@@ -1,6 +1,7 @@
 package sagablind.loader
 
 import sagablind.core.{SagaId, StepDescriptor}
+import sagablind.{SagaLogger, BoundLogger}
 
 import java.lang.management.ManagementFactory
 import java.net.URLClassLoader
@@ -16,15 +17,16 @@ import scala.util.{Try, Using}
 // MEMORY WARNING: each classloader retains all loaded classes in heap.
 // With hundreds of concurrent sagas using large jars, heap pressure is real.
 // Monitor via JarLoader.memoryStats() or the periodic logger in SagaRuntime.
+//
+// TODO good-first-issue idiomatic-scala: replace release() with
+// scala.util.Using — URLClassLoader implements AutoCloseable
 
-class JarLoader:
+class JarLoader(logger: SagaLogger = SagaLogger.noOp):
+  private val log = logger.forComponent("loader")
 
-  // active classloaders — one per saga instance
   private val loaders: scala.collection.mutable.Map[SagaId, URLClassLoader] =
     scala.collection.mutable.LinkedHashMap.empty
 
-  /** Load jar for a saga instance and instantiate all declared providers.
-   *  Returns Left if the jar is not found or any class fails to instantiate. */
   def load(
     sagaId:  SagaId,
     jarPath: String,
@@ -48,16 +50,11 @@ class JarLoader:
       .toEither.left.map: e =>
         s"Failed to load jar '$jarPath' for saga '${sagaId.value}': ${e.getMessage}"
 
-  /** Release the classloader for a saga — call when saga completes or is dropped.
-   *  Allows GC to reclaim the loaded classes. */
   def release(sagaId: SagaId): Unit =
     loaders.remove(sagaId).foreach(_.close())
 
-  /** Number of active classloaders — one per running saga instance. */
   def activeCount: Int = loaders.size
 
-  /** JVM memory and classloading stats for observability.
-   *  Log periodically to detect classloader leaks or heap pressure. */
   def memoryStats(): LoaderStats =
     val rt   = Runtime.getRuntime
     val bean = ManagementFactory.getClassLoadingMXBean
@@ -71,11 +68,10 @@ class JarLoader:
       unloadedClassCount   = bean.getUnloadedClassCount,
     )
 
-  /** Log current stats — call from a scheduled task in SagaRuntime. */
   def logStats(): Unit =
     val s = memoryStats()
-    println(
-      s"[JarLoader] active=${s.activeLoaders} " +
+    log.info(
+      s"active=${s.activeLoaders} " +
       s"heap=${s.heapUsedMb}/${s.heapTotalMb}MB (max ${s.heapMaxMb}MB) " +
       s"classes loaded=${s.loadedClassCount} unloaded=${s.unloadedClassCount}"
     )
