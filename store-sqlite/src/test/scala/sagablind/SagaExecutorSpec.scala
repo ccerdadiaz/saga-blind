@@ -8,7 +8,7 @@ import sagablind.control.SagaControl
 import sagablind.core.*
 import sagablind.loader.SagaStepProvider
 import sagablind.pool.PersistentOkvPool
-import sagablind.store.WalStore
+import sagablind.store.SqliteWalStore
 import sagablind.core.{SagaStatus, StepStatus}
 
 import java.nio.file.{Files, Paths}
@@ -16,14 +16,14 @@ import java.nio.file.{Files, Paths}
 class SagaExecutorSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
 
   val dbPath = "/tmp/saga-blind-executor-test.db"
-  var store:    WalStore            = scala.compiletime.uninitialized
+  var store: SqliteWalStore            = scala.compiletime.uninitialized
   
   var registry: SagaControl = scala.compiletime.uninitialized
   var executor: SagaExecutor        = scala.compiletime.uninitialized
 
   override def beforeEach(): Unit =
     Files.deleteIfExists(Paths.get(dbPath))
-    store    = WalStore(dbPath)
+    store    = SqliteWalStore(dbPath)
     store.init()
 
     registry = SagaControl()

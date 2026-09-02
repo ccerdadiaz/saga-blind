@@ -11,7 +11,7 @@ import java.time.Instant
 // One DB per engine (pod). All saga instances share the same DB.
 // Thread-safety: each operation uses a fresh statement; connection is shared.
 
-class WalStore(dbPath: String):
+class SqliteWalStore(dbPath: String) extends WalStore:
 
   Class.forName("org.sqlite.JDBC")
   private val conn: Connection =

@@ -13,6 +13,9 @@ import scala.concurrent.duration.*
 // The engine. Wires together all layers.
 // Engine and ZombieHunter start and stop together as a pair.
 //
+// WalStore is injected — the engine does not know which implementation is used.
+// SqliteWalStore lives in store-sqlite; the caller (Main) creates and injects it.
+//
 // Classloader lifecycle: jarLoader.release is called here after execute —
 // SagaExecution has no knowledge of classloader management.
 //
@@ -20,14 +23,13 @@ import scala.concurrent.duration.*
 // scala.util.Using — URLClassLoader implements AutoCloseable
 
 class SagaRuntime(
-  dbPath:      String,
+  store:       WalStore,
   watchDir:    String,
   stepTtl:     Duration = 30.seconds,
   zhScanEvery: Duration = 10.seconds,
   logger:      SagaLogger = SagaLogger.stdout,
 ):
   private val log         = logger.forComponent("runtime")
-  private val store       = WalStore(dbPath)
   private val jarLoader   = JarLoader(logger)
   private val sagaControl = SagaControl()
   private val executor    = SagaExecutor(store, sagaControl, logger)
@@ -41,7 +43,7 @@ class SagaRuntime(
     store.init()
     watcher.start()
     zh.start()
-    log.info(s"started — db=$dbPath watching=$watchDir")
+    log.info(s"started — watching=$watchDir")
 
   // ── Launch ────────────────────────────────────────────────────────────────
 

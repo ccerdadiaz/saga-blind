@@ -6,7 +6,7 @@ import org.scalatest.BeforeAndAfterEach
 
 import sagablind.core.*
 import sagablind.loader.JarLoader
-import sagablind.store.WalStore
+import sagablind.store.SqliteWalStore
 import sagablind.core.{SagaStatus, StepStatus}
 
 import java.nio.file.{Files, Paths}
@@ -15,12 +15,12 @@ import scala.concurrent.duration.*
 class ZombieHunterSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
 
   val dbPath = "/tmp/saga-blind-zh-test.db"
-  var store:  WalStore  = scala.compiletime.uninitialized
+  var store: SqliteWalStore  = scala.compiletime.uninitialized
   var loader: JarLoader = scala.compiletime.uninitialized
 
   override def beforeEach(): Unit =
     Files.deleteIfExists(Paths.get(dbPath))
-    store  = WalStore(dbPath)
+    store  = SqliteWalStore(dbPath)
     store.init()
     loader = JarLoader()
 

@@ -7,19 +7,19 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.BeforeAndAfterEach
 
 import sagablind.core.*
-import sagablind.store.{WalStore, SagaRow, StepRow}
+import sagablind.store.{SqliteWalStore, SagaRow, StepRow}
 import sagablind.pool.{OkvPool, OkvEntry}
 
 import java.nio.file.{Files, Paths}
 
-class WalStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
+class SqliteWalStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
 
   val dbPath = "/tmp/saga-blind-test.db"
-  var store: WalStore = uninitialized
+  var store: SqliteWalStore = uninitialized
 
   override def beforeEach(): Unit =
     Files.deleteIfExists(Paths.get(dbPath))
-    store = WalStore(dbPath)
+    store = SqliteWalStore(dbPath)
     store.init()
 
   override def afterEach(): Unit =
@@ -28,7 +28,7 @@ class WalStoreSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
 
   // ── Saga ──────────────────────────────────────────────────────────────────
 
-  "WalStore" should "insert and find a saga" in:
+  "SqliteWalStore" should "insert and find a saga" in:
     val id = SagaId("goblin-42")
     store.insertSaga(id, "saga: goblin-campaign", SagaStatus.Running)
     val row = store.findSaga(id)

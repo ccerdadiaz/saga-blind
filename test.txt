@@ -1,0 +1,115 @@
+[info] welcome to sbt 1.10.1 (Homebrew Java 26.0.2)
+[info] loading global plugins from /Users/krlos/.sbt/1.0/plugins
+[info] loading settings for project saga-blind-build-build-build from metals.sbt ...
+[info] loading project definition from /Users/krlos/git/saga-blind/project/project/project
+[info] loading settings for project saga-blind-build-build from metals.sbt ...
+[info] loading project definition from /Users/krlos/git/saga-blind/project/project
+[success] Generated .bloop/saga-blind-build-build.json
+[success] Total time: 1 s, completed 2 sept 2026, 22:11:56
+[info] loading settings for project saga-blind-build from metals.sbt ...
+[info] loading project definition from /Users/krlos/git/saga-blind/project
+[success] Generated .bloop/saga-blind-build.json
+[success] Total time: 0 s, completed 2 sept 2026, 22:11:57
+[info] loading settings for project root from build.sbt ...
+[info] set current project to saga-blind (in build file:/Users/krlos/git/saga-blind/)
+[info] SagaDslParserSpec:
+[info] SagaDslParser
+[info] - should parse saga id and jar
+[info] - should parse a mandatory step
+[info] - should parse an optional step
+[info] - should parse a bestEffort step
+[info] - should parse input mappings
+[info] - should parse compensate mappings
+[info] - should parse a parallel block
+[info] - should parse mixed steps in order
+[info] - should ignore comment lines
+[info] - should return Left if saga header is missing
+[info] - should return Left if jar header is missing
+[info] - should return Left if steps section is missing
+[info] - should return Left if steps section is empty
+[info] JarLoaderSpec:
+[info] JarLoader
+[info] - should load a jar and instantiate declared providers
+[info] - should return Left if jar does not exist
+[info] - should return Left if class is not in jar
+[info] - should instantiate providers that execute correctly
+[info] - should isolate classloaders between saga instances
+[info] - should release classloader on saga completion
+[info] - should release all classloaders independently
+[info] - should report memory stats with correct active loader count
+[info] - should reflect released loaders in stats
+[info] Run completed in 250 milliseconds.
+[info] Total number of tests run: 22
+[info] Suites: completed 2, aborted 0
+[info] Tests: succeeded 22, failed 0, canceled 0, ignored 0, pending 0
+[info] All tests passed.
+[info] SqliteWalStoreSpec:
+[info] SqliteWalStore
+[info] - should insert and find a saga
+[info] - should update saga status
+[info] - should list all sagas
+[info] - should return None for unknown saga
+[info] - should insert and retrieve steps
+[info] - should update step status
+[info] - should deposit a pool entry
+[info] - should enforce ownership — reject duplicate key
+[info] - should deposit a delta atomically
+[info] - should reject delta if any key is already owned
+[info] - should reconstruct full pool for a saga
+[info] - should isolate pools between different saga instances
+[info] PersistentOkvPoolSpec:
+[info] PersistentOkvPool
+[info] - should deposit a key and read it from memory
+[info] - should persist the key to WAL on deposit
+[info] - should enforce ownership on deposit
+[info] - should deposit a delta atomically
+[info] - should reject delta and not pollute memory if WAL rejects it
+[info] - should inject initial params with __init__ owner
+[info] - should restore memory from WAL after simulated crash
+[info] - should restore complex JSON values correctly
+[info] - should restore ownership correctly
+[info] - should return None for unknown key
+[info] - should support nested JSON objects
+[info] SagaControlSpec:
+[info] SagaControl
+[info] - should publish a saga from a .saga file
+[info] - should get a saga by name regardless of status
+[info] - should return Left for unknown saga
+[info] - should withdraw a saga by name
+[info] - should start in Playing status after publish
+[info] - should get returns saga with its status
+[info] - should stop a Playing saga
+[info] - should not stop an already Stopped saga
+[info] - should not stop an unknown saga
+[info] - should remove a Stopped saga with no instances
+[info] - should not remove a Playing saga
+[info] - should not remove a Stopped saga with instances still in flight
+[info] - should list only Playing sagas as available
+[info] - should list all sagas regardless of status
+[info] - should stop all Playing definitions on stopAll
+[info] - should not affect already Stopped definitions on stopAll
+[info] SagaExecutorSpec:
+[info] SagaExecutor
+[info] - should execute a single mandatory step and mark saga Done
+[info] - should deposit step outputs into the pool
+[info] - should resolve input mappings from pool before calling execute
+[info] - should chain outputs from one step as inputs to the next
+[info] - should execute parallel steps concurrently
+[info] - should skip optional step on failure and continue
+[info] - should skip bestEffort step on failure and continue
+[info] - should compensate executed steps LIFO when mandatory step fails
+[info] - should pass compensation args resolved from pool
+[info] - should reject a definition with forward owner references
+[info] ZombieHunterSpec:
+[info] ZombieHunter
+[info] - should mark a Registered step as Unknown when TTL exceeded
+[info] - should not mark a Registered step as Unknown when TTL not exceeded
+[info] - should not touch Done steps
+[info] - should not touch sagas not in Running state
+[info] - should log error when jar cannot be loaded for recovery
+[info] Run completed in 2 seconds, 183 milliseconds.
+[info] Total number of tests run: 54
+[info] Suites: completed 5, aborted 0
+[info] Tests: succeeded 54, failed 0, canceled 0, ignored 0, pending 0
+[info] All tests passed.
+[success] Total time: 3 s, completed 2 sept 2026, 22:12:00
