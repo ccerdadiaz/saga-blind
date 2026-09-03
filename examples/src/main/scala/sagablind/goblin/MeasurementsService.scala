@@ -1,25 +1,20 @@
 package sagablind.goblin
 
 import sagablind.loader.SagaStepProvider
-
-// ── MeasurementsService ───────────────────────────────────────────────────────
-// Step 1 — measures the goblin.
-// Inputs:  goblinId (String)
-// Outputs: head (Int), armLength (Int), footSize (Int)
+import org.slf4j.LoggerFactory
 
 class MeasurementsService extends SagaStepProvider:
+  private val log = LoggerFactory.getLogger(getClass)
   def stepId = "measurements"
 
   def execute(args: Map[String, ujson.Value]): Either[Throwable, Map[String, ujson.Value]] =
     val goblinId = args("goblinId").str
-    println(s"  [measurements] measuring goblin $goblinId...")
+    log.debug(s"measuring goblin $goblinId")
     Thread.sleep(300)
-    Right(Map(
-      "head"      -> ujson.Num(58),
-      "armLength" -> ujson.Num(42),
-      "footSize"  -> ujson.Num(38),
-    ))
+    val result = Map("head" -> ujson.Num(58), "armLength" -> ujson.Num(42), "footSize" -> ujson.Num(38))
+    log.debug(s"measurements complete: head=58 armLength=42 footSize=38")
+    Right(result)
 
   def compensate(args: Map[String, ujson.Value]): Either[Throwable, Unit] =
-    println(s"  [measurements] discarding measurements")
+    log.debug("discarding measurements")
     Right(())

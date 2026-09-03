@@ -3,21 +3,26 @@
 
   <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
     <encoder>
-      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level [%logger{0}] %msg%n</pattern>
+      <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] [%logger{1}] %msg%n</pattern>
     </encoder>
   </appender>
 
-  <!-- saga-blind engine logs -->
-  <logger name="sagablind" level="DEBUG" additivity="false">
+  <!-- saga-blind engine -->
+  <logger name="sagablind" level="INFO" additivity="false">
     <appender-ref ref="CONSOLE"/>
   </logger>
 
-  <!-- suppress undertow/xnio noise -->
-  <logger name="io.undertow"        level="WARN"/>
-  <logger name="org.xnio"           level="WARN"/>
-  <logger name="org.jboss.threads"  level="WARN"/>
+  <!-- goblin-world services — DEBUG to see step internals -->
+  <logger name="sagablind.goblin" level="DEBUG" additivity="false">
+    <appender-ref ref="CONSOLE"/>
+  </logger>
 
-  <root level="INFO">
+  <!-- suppress infrastructure noise -->
+  <logger name="io.undertow"       level="WARN"/>
+  <logger name="org.xnio"          level="WARN"/>
+  <logger name="org.jboss.threads" level="WARN"/>
+
+  <root level="WARN">
     <appender-ref ref="CONSOLE"/>
   </root>
 
