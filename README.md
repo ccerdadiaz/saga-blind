@@ -1,13 +1,19 @@
 # saga-blind
 
-> "In the kingdom of the blind, the one-eyed man is the king."  
-> — and here, the one-eyed man is the WAL.
+> "In the kingdom of the blind, the one-eyed man is the king."
 
 **saga-blind** is a SAGA orchestration runtime that executes business logic it has never seen.
 
 This project exists because the combination of ideas it explores is interesting to build and worth understanding — not because it solves a problem better than existing tools. It is an honest aggregation of known theory and practice, pushing some of those ideas a little further than usual and seeing what happens.
 
 → [Architecture diagrams](doc/architecture.md)
+
+## The problem
+
+Distributed transactions are hard. You can't lock resources across services.
+You can't roll back what already happened in another process. And when a
+service goes silent — not failing, just *silent* — you don't know if it acted
+or not.
 
 ## What it does
 
@@ -187,9 +193,8 @@ SAGA_BLIND_PORT     HTTP port                (default: 7777)
 
 ## Relation to saga-graph
 
-saga-blind is built on top of [saga-graph](https://github.com/ccerdadiaz/saga-graph), which provides the WAL, LIFO compensation, and ZombieHunter recovery.
+saga-blind is built whith the knowledge of [saga-graph](https://github.com/ccerdadiaz/saga-graph), but free of the hard initial restrictions.
 
-saga-graph works fine without saga-blind. saga-blind would not exist without saga-graph.
 
 ## Status
 
