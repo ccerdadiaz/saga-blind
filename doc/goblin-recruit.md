@@ -4,6 +4,8 @@ Arms and enlists a goblin for battle.
 
 Demonstrates: sequential steps, parallel block, param mapping between steps, LIFO compensation with args from the OKV.
 
+→ Live demo: [saga-blind-console-demo.mp4](saga-blind-console-demo.mp4)
+
 ## Saga flow
 
 ```mermaid
@@ -49,6 +51,8 @@ flowchart TD
 
 ## Compensation (LIFO)
 
+→ See also: [lifo-tour.mp4](lifo-tour.mp4)
+
 If any mandatory step fails, compensation runs in reverse:
 
 ```mermaid
@@ -65,6 +69,8 @@ flowchart RL
 ```
 
 ## OKV data flow
+
+→ See also: [okv-tour.mp4](okv-tour.mp4)
 
 Each step reads from owners that already executed and deposits its own outputs.
 

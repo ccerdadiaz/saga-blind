@@ -1,5 +1,18 @@
 # saga-blind — Architecture
 
+## Videos
+
+| Video | Description |
+|-------|-------------|
+| [saga.mp4](saga.mp4) | The engine — loading a definition and processing a request |
+| [dsl-tour.mp4](dsl-tour.mp4) | How a single DSL line becomes a step dependency |
+| [okv-tour.mp4](okv-tour.mp4) | The OKV pool filling step by step |
+| [lifo-tour.mp4](lifo-tour.mp4) | LIFO compensation when a step fails |
+| [zh-tour.mp4](zh-tour.mp4) | ZombieHunter — TTL detection and recovery |
+| [saga-blind-console-demo.mp4](saga-blind-console-demo.mp4) | Live demo — engine, launch, logs, shutdown |
+
+---
+
 ## 1. Module structure
 
 ```mermaid
@@ -134,6 +147,8 @@ The engine resolves these mappings before each call. If a mapping references a k
 
 ## 5. OKV pool data flow
 
+→ See also: [okv-tour.mp4](okv-tour.mp4)
+
 ```mermaid
 graph LR
     INIT(["__init__\nparams from launch"])
@@ -190,6 +205,8 @@ stateDiagram-v2
 
 ## 7. ZombieHunter recovery
 
+→ See also: [zh-tour.mp4](zh-tour.mp4)
+
 ```mermaid
 flowchart TD
     SCAN["scan WAL\nevery N seconds"]
@@ -225,14 +242,14 @@ HH:mm:ss.SSS  LEVEL  [thread]  [logger]  [component]  [sagaId]  message
 ```
 
 ```
-09:59:07.320 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] saga 'my-saga' started
-09:59:07.324 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] → 'stepA' {paramX:"value"}
-09:59:07.929 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] ← 'stepA' done {keyA1:58, keyA2:42}
-09:59:07.931 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] ⇉ parallel [stepC, stepD]
-09:59:07.950 INFO  [global-1] [sagablind] [engine] [a3f2c1d8] → 'stepC' {paramY:42}
-09:59:07.950 INFO  [global-2] [sagablind] [engine] [a3f2c1d8] → 'stepD' {paramZ:38}
-09:59:08.172 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] ⇇ parallel [stepC, stepD] joined
-09:59:09.004 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] saga 'my-saga' done
+10:05:07.612 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] saga 'my-saga' started
+10:05:07.615 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] → 'stepA' {paramX:"value"}
+10:05:07.929 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] ← 'stepA' done {keyA1:58, keyA2:42}
+10:05:07.931 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] ⇉ parallel [stepC, stepD]
+10:05:07.950 INFO  [global-1] [sagablind] [engine] [a3f2c1d8] → 'stepC' {paramY:42}
+10:05:07.950 INFO  [global-2] [sagablind] [engine] [a3f2c1d8] → 'stepD' {paramZ:38}
+10:05:08.172 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] ⇇ parallel [stepC, stepD] joined
+10:05:09.004 INFO  [XNIO-1]   [sagablind] [engine] [a3f2c1d8] saga 'my-saga' done
 ```
 
 Filter by sagaId to get the full history of one instance:
