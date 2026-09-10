@@ -91,7 +91,7 @@ class SagaRuntime(
 
     val anomalies = store.allSagas().filter: row =>
       row.status match
-        case SagaStatus.Done | SagaStatus.Compensated | SagaStatus.Failed => false
+        case SagaStatus.Done | SagaStatus.Compensated | SagaStatus.NeedsReview => false
         case _ => true
 
     if anomalies.nonEmpty then

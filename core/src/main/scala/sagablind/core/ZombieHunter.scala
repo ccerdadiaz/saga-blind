@@ -158,18 +158,26 @@ class ZombieHunter(
       .sortBy(_.startedAt)
       .reverse
 
+    var compensationFailed = false
+
     doneSteps.foreach: step =>
       descriptors.find(_.id == step.stepId).foreach: descriptor =>
         providers.get(descriptor.id).foreach: provider =>
           ParamExtractor.resolve(descriptor.compensateMappings, pool.memory) match
             case Left(err) =>
               log.error(s"Compensation param extraction failed for '${step.stepId}': $err")
+              compensationFailed = true
             case Right(args) =>
               provider.compensate(args) match
                 case Right(()) =>
                   log.info(s"compensated '${step.stepId}'")
                 case Left(err) =>
                   log.error(s"Compensation failed for '${step.stepId}': ${err.getMessage}")
+                  compensationFailed = true
 
-    store.updateSagaStatus(saga.sagaId, SagaStatus.Compensated)
+    val finalStatus =
+      if compensationFailed then SagaStatus.NeedsReview
+      else SagaStatus.Compensated
+
+    store.updateSagaStatus(saga.sagaId, finalStatus)
     jarLoader.release(saga.sagaId)

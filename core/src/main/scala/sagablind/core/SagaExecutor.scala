@@ -128,17 +128,22 @@ private class SagaExecution(
     log.info(s"⇇ parallel [${steps.map(_.id).mkString(", ")}] joined")
     results.collectFirst { case Left(err) => Left(err) }.getOrElse(Right(()))
 
-  private def compensateLIFO(): Unit =
+  private def compensateLIFO(): Boolean =
+    var allOk = true
     executed.toList.reverse.foreach: descriptor =>
       providers.get(descriptor.id).foreach: provider =>
         ParamExtractor.resolve(descriptor.compensateMappings, pool.memory) match
           case Left(err) =>
             log.warn(s"compensation param extraction failed for '${descriptor.id}': $err")
+            allOk = false
           case Right(args) =>
             log.info(s"↩ compensating '${descriptor.id}'")
             provider.compensate(args) match
               case Right(()) => log.info(s"↩ '${descriptor.id}' compensated")
-              case Left(err) => log.warn(s"↩ '${descriptor.id}' compensation failed: ${err.getMessage}")
+              case Left(err) =>
+                log.warn(s"↩ '${descriptor.id}' compensation failed: ${err.getMessage}")
+                allOk = false
+    allOk
 
   // Called from parallel Futures — ScopedValue does not propagate to ExecutionContext.global
   // so sagaId is passed explicitly for logging.

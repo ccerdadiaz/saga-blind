@@ -18,16 +18,21 @@ enum StepKind:
 enum StepStatus:
   case Registered, Done, Failed, Unknown
 
-/** Saga instance lifecycle states */
+/** Saga instance lifecycle states
+ *  Running      — executing steps
+ *  Done         — all steps completed successfully
+ *  Compensated  — a step failed and LIFO compensation completed
+ *  NeedsReview  — compensation also failed — human intervention required
+ */
 enum SagaStatus:
-  case Running, Done, Failed, Stopped, Compensated
+  case Running, Done, Compensated, NeedsReview
 
 /** Definition lifecycle.
  *  Playing — accepts new instances
  *  Stopped — no new instances; in-flight instances run to completion
- *  Removed — definition no longer exists */
+ */
 enum DefinitionStatus:
-  case Playing, Stopped, Removed
+  case Playing, Stopped
 
 // ── Parameter mapping ────────────────────────────────────────────────────────
 // Describes how to extract a value from the OKV pool and bind it to a parameter.

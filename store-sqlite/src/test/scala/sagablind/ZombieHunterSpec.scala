@@ -97,7 +97,7 @@ class ZombieHunterSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach
 
   it should "not touch sagas not in Running state" in:
     val sagaId = SagaId("zh-4")
-    store.insertSaga(sagaId, dslContent, SagaStatus.Stopped)
+    store.insertSaga(sagaId, dslContent, SagaStatus.Compensated)
     store.insertStepAt(sagaId, "measurements", StepKind.Mandatory, StepStatus.Registered, pastTime)
 
     val zh = makeZH()
