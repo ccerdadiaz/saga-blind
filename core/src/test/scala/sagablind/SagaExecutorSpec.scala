@@ -8,22 +8,19 @@ import sagablind.control.SagaControl
 import sagablind.core.*
 import sagablind.loader.SagaStepProvider
 import sagablind.pool.PersistentOkvPool
-import sagablind.store.SqliteWalStore
+import sagablind.store.InMemoryWalStore
 import sagablind.core.{SagaStatus, StepStatus}
 
-import java.nio.file.{Files, Paths}
 
 class SagaExecutorSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
 
-  val dbPath = "/tmp/saga-blind-executor-test.db"
-  var store: SqliteWalStore            = scala.compiletime.uninitialized
+  var store: InMemoryWalStore            = scala.compiletime.uninitialized
   
   var registry: SagaControl = scala.compiletime.uninitialized
   var executor: SagaExecutor        = scala.compiletime.uninitialized
 
   override def beforeEach(): Unit =
-    Files.deleteIfExists(Paths.get(dbPath))
-    store    = SqliteWalStore(dbPath)
+    store    = InMemoryWalStore()
     store.init()
 
     registry = SagaControl()
@@ -31,7 +28,6 @@ class SagaExecutorSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach
 
   override def afterEach(): Unit =
     store.close()
-    Files.deleteIfExists(Paths.get(dbPath))
 
   // ── helpers ───────────────────────────────────────────────────────────────
 

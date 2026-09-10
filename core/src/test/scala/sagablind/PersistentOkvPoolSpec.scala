@@ -6,27 +6,23 @@ import org.scalatest.BeforeAndAfterEach
 
 import sagablind.core.SagaId
 import sagablind.pool.PersistentOkvPool
-import sagablind.store.SqliteWalStore
+import sagablind.store.InMemoryWalStore
 
-import java.nio.file.{Files, Paths}
 
 class PersistentOkvPoolSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach:
 
-  val dbPath = "/tmp/saga-blind-pool-test.db"
-  var store: SqliteWalStore = scala.compiletime.uninitialized
+  var store: InMemoryWalStore = scala.compiletime.uninitialized
   var pool: PersistentOkvPool = scala.compiletime.uninitialized
   val sagaId = SagaId("goblin-pool-test")
 
   override def beforeEach(): Unit =
-    Files.deleteIfExists(Paths.get(dbPath))
-    store = SqliteWalStore(dbPath)
+    store = InMemoryWalStore()
     store.init()
     store.insertSaga(sagaId, "def", sagablind.core.SagaStatus.Running)
     pool = PersistentOkvPool(sagaId, store)
 
   override def afterEach(): Unit =
     store.close()
-    Files.deleteIfExists(Paths.get(dbPath))
 
   // ── deposit ───────────────────────────────────────────────────────────────
 

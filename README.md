@@ -236,3 +236,32 @@ Implemented and tested (76 tests):
 ## License
 
 Apache 2.0
+
+## Reliability — WAL-before-action
+
+Every state transition is written to the WAL before the action it describes takes place. If the process dies at any point, the WAL contains enough information to reconstruct exactly what happened and what needs to happen next.
+
+For each step execution the sequence is:
+
+```
+1. insertStep(Registered)     ← persisted before calling the jar
+2. ParamExtractor.resolve()   ← reads from OKV
+3. provider.execute(args)     ← calls the jar
+4. pool.depositDelta(outputs) ← writes outputs to OKV + WAL
+5. updateStep(Done | Failed)  ← persisted after the jar returns
+```
+
+If the process dies between steps 1 and 3, the step is in `Registered` state in the WAL. The ZombieHunter will detect it when its TTL expires, reconstruct the OKV pool and the jar from the WAL, and attempt a forward retry.
+
+If the process dies between steps 3 and 5, the step output may or may not have been deposited. The ZombieHunter treats it as `Unknown` and retries — the jar must be idempotent for this to be safe.
+
+The same WAL-before-action principle applies at the saga level:
+
+```
+insertSaga(Running)     ← before executing any step
+updateSaga(Done)        ← after all steps complete
+updateSaga(Compensated) ← after LIFO compensation completes
+updateSaga(NeedsReview) ← if compensation itself fails
+```
+
+This means a saga is never lost. It is either in a terminal state or in a state the ZombieHunter knows how to recover.
