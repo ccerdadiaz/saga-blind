@@ -65,57 +65,45 @@ object SagaDslParser:
   // ── Element parsing ───────────────────────────────────────────────────────
 
   private def parseElements(lines: List[String]): Either[String, List[SagaElement]] =
-    val elements = scala.collection.mutable.ListBuffer.empty[SagaElement]
-    var i = 0
 
-    while i < lines.size do
-      val line    = lines(i)
-      val trimmed = line.trim
-      val indent  = line.takeWhile(_ == ' ').length
+    def go(remaining: List[String], acc: List[SagaElement]): Either[String, List[SagaElement]] =
+      remaining match
+       case Nil => 
+         if acc.isEmpty then Left("No steps defined")
+         else Right(acc.reverse)
+      
+       case line :: rest if line.trim.startsWith("- parallel:") =>
+         val parallelLines = rest.takeWhile(_.takeWhile(_ == ' ').length >= 4)
+         parseParallelSteps(parallelLines) match
+           case Left(err)    => Left(err)
+           case Right(Nil)   => Left("Empty parallel block")
+           case Right(steps) => go(rest.drop(parallelLines.size), SagaElement.Parallel(steps) :: acc)
 
-      if indent == 2 && trimmed.startsWith("- parallel:") then
-        // parallel block — collect child steps at indent 4
-        i += 1
-        val parallelLines = lines.drop(i).takeWhile(l => l.takeWhile(_ == ' ').length >= 4)
-        parseParallelSteps(parallelLines) match
-          case Left(err)    => return Left(err)
-          case Right(steps) =>
-            if steps.isEmpty then return Left("Empty parallel block")
-            elements += SagaElement.Parallel(steps)
-            i += parallelLines.size
+       case line :: _ if line.trim.startsWith("- id:") =>
+         val block = collectBlock(remaining, 0)
+         parseStep(block) match
+           case Left(err)   => Left(err)
+           case Right(desc) => go(remaining.drop(block.size), SagaElement.Single(desc) :: acc)
 
-      else if indent == 2 && trimmed.startsWith("- id:") then
-        // single step block — collect all lines of this step
-        val stepLines = lines.drop(i).takeWhile: l =>
-          val ind = l.takeWhile(_ == ' ').length
-          ind > 2 || (ind == 2 && l.trim.startsWith("- id:") && l == lines(i))
-        val blockLines = collectBlock(lines, i)
-        parseStep(blockLines) match
-          case Left(err)       => return Left(err)
-          case Right(descriptor) =>
-            elements += SagaElement.Single(descriptor)
-            i += blockLines.size
-      else
-        i += 1
+       case _ :: rest => go(rest, acc)
 
-    if elements.isEmpty then Left("No steps defined")
-    else Right(elements.toList)
+    go(lines, Nil)
 
   private def parseParallelSteps(lines: List[String]): Either[String, List[StepDescriptor]] =
-    val steps  = scala.collection.mutable.ListBuffer.empty[StepDescriptor]
-    var i      = 0
-    while i < lines.size do
-      val line    = lines(i)
-      val trimmed = line.trim
-      if trimmed.startsWith("- id:") then
-        val block = collectBlock(lines, i)
-        parseStep(block) match
-          case Left(err) => return Left(err)
-          case Right(d)  => steps += d
-        i += block.size
-      else
-        i += 1
-    Right(steps.toList)
+
+    def go(remaining: List[String], acc: List[StepDescriptor]): Either[String, List[StepDescriptor]] =
+      remaining match
+        case Nil => Right(acc.reverse)
+
+        case line :: _ if line.trim.startsWith("- id:") =>
+          val block = collectBlock(remaining, 0)
+          parseStep(block) match
+            case Left(err)   => Left(err)
+            case Right(desc) => go(remaining.drop(block.size), desc :: acc)
+
+        case _ :: rest => go(rest, acc)
+
+    go(lines, Nil)
 
   /** Collect all lines belonging to a step block starting at index i */
   private def collectBlock(lines: List[String], start: Int): List[String] =
@@ -153,31 +141,31 @@ object SagaDslParser:
   // ── Mapping parsing ───────────────────────────────────────────────────────
 
   private def parseMappings(lines: List[String], section: String): List[ParamMapping] =
+
     val sectionIdx = lines.indexWhere(_.trim == section)
     if sectionIdx < 0 then return Nil
 
     val sectionIndent = lines(sectionIdx).takeWhile(_ == ' ').length
     val sectionLines  = lines.drop(sectionIdx + 1)
-      .takeWhile(l => l.takeWhile(_ == ' ').length > sectionIndent)
+      .takeWhile(_.takeWhile(_ == ' ').length > sectionIndent)
 
-    // group by "- param:" entries
-    val mappings = scala.collection.mutable.ListBuffer.empty[ParamMapping]
-    var i = 0
-    while i < sectionLines.size do
-      val line    = sectionLines(i)
-      val trimmed = line.trim
-      if trimmed.startsWith("- param:") then
-        val param = trimmed.stripPrefix("- param:").trim
-        // look for 'from:' on next line
-        val fromLine = sectionLines.drop(i + 1)
-          .find(_.trim.startsWith("from:"))
-          .map(_.trim.stripPrefix("from:").trim)
-          .getOrElse("")
-        if param.nonEmpty && fromLine.nonEmpty then
-          mappings += ParamMapping(param = param, from = fromLine)
-      i += 1
+    def go(remaining: List[String], acc: List[ParamMapping]): List[ParamMapping] =
+      remaining match
+        case Nil => acc.reverse
 
-    mappings.toList
+        case line :: rest if line.trim.startsWith("- param:") =>
+          val param   = line.trim.stripPrefix("- param:").trim
+          val fromOpt = rest.find(_.trim.startsWith("from:"))
+                          .map(_.trim.stripPrefix("from:").trim)
+          fromOpt match
+            case Some(from) if param.nonEmpty && from.nonEmpty =>
+              go(rest, ParamMapping(param = param, from = from) :: acc)
+            case _ =>
+              go(rest, acc)
+
+        case _ :: rest => go(rest, acc)
+
+    go(sectionLines, Nil)
 
   // ── Utility ───────────────────────────────────────────────────────────────
 
