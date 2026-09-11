@@ -22,6 +22,7 @@ This project exists because the combination of ideas it explores is interesting 
 | [okv-tour.mp4](doc/okv-tour.mp4) | The OKV pool filling step by step |
 | [lifo-tour.mp4](doc/lifo-tour.mp4) | LIFO compensation when a step fails |
 | [zh-tour.mp4](doc/zh-tour.mp4) | ZombieHunter — TTL detection and recovery |
+| [execution-tour.mp4](doc/execution-tour.mp4) | SagaExecution — WAL-before-action, step lifecycle, LIFO compensation |
 | [saga-blind-console-demo.mp4](doc/saga-blind-console-demo.mp4) | Live demo — engine, launch, logs, shutdown |
 
 ## The problem
